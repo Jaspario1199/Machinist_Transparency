@@ -638,6 +638,52 @@ textarea { min-height: 80px; resize: vertical; }
 
 
 
+/* --------------------------------------------------- operations in a part */
+
+.op-headline {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: var(--soft);
+}
+.op-name { font-size: 1.1rem; font-weight: 800; margin-top: 2px; }
+.op-percent { font-size: 1.6rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+
+.ops { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.op {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.op.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
+.op.done { opacity: .62; }
+.op-seq {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 7px; font-weight: 850; font-size: .82rem;
+}
+.op.active .op-seq { background: var(--blue-solid); color: #fff; }
+.op.done .op-seq { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
+.op-main { flex: 1; display: grid; gap: 3px; min-width: 0; }
+.op-title { font-weight: 700; }
+.op-track { height: 6px; }
+.op-est { flex: none; font-size: .82rem; font-variant-numeric: tabular-nums; }
+
+.stats.five { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 900px) {
+  .stats.five { grid-template-columns: repeat(2, 1fr); }
+  .op { flex-wrap: wrap; }
+}
+
 /* ------------------------------------------------------------ adding work */
 
 .source-tabs { margin-bottom: 14px; }
@@ -1177,6 +1223,27 @@ window.DOWNTIME_REASONS = [
     return out;
   }
 
+  /**
+   * A CAMWorks operation list, as posted alongside the program.
+   *
+   * Each operation carries the block range it occupies in the NC file and the
+   * estimated cut time CAMWorks produced. Together these are a time map: given
+   * the block number the controller is currently executing, you can say which
+   * operation is running and what fraction of the cycle is behind you.
+   *
+   * The estimate does not need to be accurate in absolute terms — see
+   * docs/13 D-23. It only needs the right SHAPE, because the platform rescales
+   * it against measured cycle time after a few real runs.
+   */
+  function operations(list) {
+    let block = 1;
+    return list.map(([name, tool, estMin, blocks], i) => {
+      const op = { seq: i + 1, name, tool, estMin, fromBlock: block, toBlock: block + blocks - 1 };
+      block += blocks;
+      return op;
+    });
+  }
+
   window.MT_SEED = function buildSeed(now) {
     const shiftStart = now - 8 * HOUR;
     const random = rng(20481);
@@ -1241,6 +1308,7 @@ window.DOWNTIME_REASONS = [
           model: 'Haas VF-2SS',
           controller: 'Haas NGC 100.21',
           collector: { protocol: 'MTConnect', online: true, lastEventAt: now - 2000 },
+          telemetry: { block: 1980, tool: 'T6 — 8 mm end mill', feedOverride: 100 },
           state: 'PRODUCTION',
           stateSince: now - 42 * MIN,
           setupRemainingMin: 0,
@@ -1257,6 +1325,15 @@ window.DOWNTIME_REASONS = [
             path: 'FS1 / Sensor Housing A / Rev C',
             requestedPriority: 3,
             dueAt: now + 26 * HOUR,
+            camSource: 'CAMWorks 2026 · posted 3 days ago',
+            operations: operations([
+              ['Face top', 'T1 — 63 mm face mill', 0.9, 180],
+              ['Rough pocket', 'T4 — 12 mm end mill', 3.2, 1270],
+              ['Finish profile', 'T6 — 8 mm end mill', 2.1, 1150],
+              ['Spot drill', 'T2 — 90° spot', 0.5, 100],
+              ['Drill 4 × \u00d85', 'T7 — 5 mm drill', 0.8, 160],
+              ['Chamfer', 'T9 — chamfer mill', 0.5, 100],
+            ]),
           },
           queue: [
             { wo: 'WO-20503', part: 'Adapter Plate', qty: 24, cycleMedianMin: 6.5, cycleSigmaMin: 0.5, setupMin: 25, program: 'O20503', ready: 'Material ready', readyCode: 'READY', requestedPriority: 4, dueAt: now + 50 * HOUR },
@@ -1282,6 +1359,7 @@ window.DOWNTIME_REASONS = [
           model: 'Doosan DNM 5700',
           controller: 'FANUC 31i-B5',
           collector: { protocol: 'FOCAS', online: true, lastEventAt: now - 4000 },
+          telemetry: { block: 0, tool: '—', feedOverride: 100 },
           state: 'SETUP',
           stateSince: now - 18 * MIN,
           setupRemainingMin: 22,
@@ -1298,6 +1376,14 @@ window.DOWNTIME_REASONS = [
             path: 'FS1 / Probe Bracket / Rev B',
             requestedPriority: 2,
             dueAt: now + 30 * HOUR,
+            camSource: 'CAMWorks 2026 · posted this morning',
+            operations: operations([
+              ['Face and square', 'T1 — 50 mm face mill', 1.1, 210],
+              ['Rough profile', 'T4 — 10 mm end mill', 3.6, 1480],
+              ['Finish profile', 'T6 — 6 mm end mill', 2.4, 1220],
+              ['Drill 2 × \u00d86.8', 'T7 — 6.8 mm drill', 1.2, 190],
+              ['Tap M8', 'T8 — M8 tap', 0.7, 90],
+            ]),
           },
           queue: [
             { wo: 'WO-20524', part: 'Cover Plate', qty: 30, cycleMedianMin: 5, cycleSigmaMin: 0.4, setupMin: 20, program: 'O20524', ready: 'Material ready', readyCode: 'READY', requestedPriority: 3, dueAt: now + 44 * HOUR },
@@ -1325,6 +1411,7 @@ window.DOWNTIME_REASONS = [
           model: 'Okuma LB3000',
           controller: 'OSP-P300L',
           collector: { protocol: 'MTConnect', online: true, lastEventAt: now - 3000 },
+          telemetry: { block: 700, tool: 'T5 — 60° threading', feedOverride: 100 },
           state: 'STOPPED',
           stateSince: now - 9 * MIN,
           setupRemainingMin: 0,
@@ -1341,6 +1428,13 @@ window.DOWNTIME_REASONS = [
             path: 'FS1 / Threaded Stem / Rev A',
             requestedPriority: 2,
             dueAt: now + 12 * HOUR,
+            camSource: 'CAMWorks 2026 · posted last week',
+            operations: operations([
+              ['Face and rough OD', 'T1 — CNMG rougher', 1.4, 320],
+              ['Finish OD', 'T3 — DNMG finisher', 0.9, 320],
+              ['Single-point thread', 'T5 — 60° threading', 1.2, 340],
+              ['Part off', 'T7 — 3 mm parting', 0.5, 100],
+            ]),
           },
           queue: [
             { wo: 'WO-20508', part: 'Shaft Collar', qty: 50, cycleMedianMin: 3.2, cycleSigmaMin: 0.2, setupMin: 18, program: 'O20508', ready: 'Material ready', readyCode: 'READY', requestedPriority: 3, dueAt: now + 40 * HOUR },
@@ -1661,6 +1755,122 @@ window.DOWNTIME_REASONS = [
     };
   }
 
+
+  // --------------------------------------- in-cycle progress from the NC file ---
+
+  /**
+   * Where are we inside the current part?
+   *
+   * The controller reports the block (sequence) it is executing right now —
+   * MTConnect exposes it, FANUC FOCAS exposes it via the running sequence
+   * number, Okuma OSP exposes it. The CAMWorks operation list gives each
+   * operation a block range and an estimated cut time. Put together, the block
+   * number tells you which operation is running and — weighted by time, not by
+   * block count — how far through the part you are.
+   *
+   * Weighting by TIME is the whole point. 500 blocks of rapids take seconds and
+   * 500 blocks of a finish contour take minutes, so raw "block 1980 of 2960 =
+   * 67%" would be badly wrong. Cumulative estimated minutes is right.
+   *
+   * The absolute accuracy of the CAM estimate barely matters here. It supplies
+   * the SHAPE of the curve; `calibration` rescales the magnitude against what
+   * this machine actually does, so the systematic optimism of any static
+   * estimate cancels out after a few real cycles.
+   */
+  function operationProgress(machine) {
+    const ops = machine.active.operations;
+    if (!ops || !ops.length) return null;
+
+    const totalEstMin = ops.reduce((a, o) => a + o.estMin, 0);
+    const totalBlocks = ops[ops.length - 1].toBlock;
+    const block = machine.telemetry ? machine.telemetry.block : 0;
+    /**
+     * 'PART' — the posted file makes one piece and is re-run per piece.
+     * 'JOB'  — the posted file runs the whole quantity in one go.
+     * The block number means a different thing in each case, so the scope is
+     * carried on the job rather than assumed.
+     */
+    const scope = machine.active.programScope === 'JOB' ? 'JOB' : 'PART';
+
+    if (!block) {
+      return {
+        ops, totalEstMin, totalBlocks, block: 0, scope,
+        current: null, currentIndex: -1, withinOp: 0,
+        elapsedEstMin: 0, percent: 0, remainingEstMin: totalEstMin,
+        calibration: null, remainingMin: totalEstMin,
+      };
+    }
+
+    let index = ops.findIndex((o) => block >= o.fromBlock && block <= o.toBlock);
+    if (index < 0) index = block > totalBlocks ? ops.length - 1 : 0;
+    const current = ops[index];
+
+    const span = Math.max(1, current.toBlock - current.fromBlock);
+    const withinOp = Math.min(1, Math.max(0, (block - current.fromBlock) / span));
+    const elapsedEstMin = ops.slice(0, index).reduce((a, o) => a + o.estMin, 0) + withinOp * current.estMin;
+
+    const calibration = programCalibration(machine, totalEstMin);
+    const remainingEstMin = Math.max(0, totalEstMin - elapsedEstMin);
+
+    return {
+      ops,
+      totalEstMin,
+      totalBlocks,
+      block,
+      scope,
+      current,
+      currentIndex: index,
+      withinOp,
+      elapsedEstMin,
+      percent: totalEstMin > 0 ? elapsedEstMin / totalEstMin : 0,
+      remainingEstMin,
+      calibration,
+      remainingMin: remainingEstMin * (calibration ? calibration.factor : 1),
+    };
+  }
+
+  /**
+   * How wrong is the CAM estimate on this machine, measured?
+   *
+   * Returns null until there are enough observed cycles to say. This is what
+   * turns a theoretical number into a trustworthy one without anyone having to
+   * model accel/decel, look-ahead or feedrate override — the machine measures
+   * all of that for us.
+   */
+  function programCalibration(machine, totalEstMin) {
+    const observed = machine.history.cycles
+      .filter((c) => c.wo === machine.active.wo)
+      .map((c) => c.min);
+    if (observed.length < 3 || !totalEstMin) return null;
+
+    const actual = median(observed);
+    return {
+      samples: observed.length,
+      estMin: totalEstMin,
+      actualMin: actual,
+      factor: actual / totalEstMin,
+      variancePct: ((actual - totalEstMin) / totalEstMin) * 100,
+    };
+  }
+
+  /**
+   * The inverse: which block corresponds to a given fraction of cycle time.
+   * The simulated collector uses this to report a plausible block number.
+   */
+  function blockAtTimeFraction(ops, fraction) {
+    if (!ops || !ops.length) return 0;
+    const totalEstMin = ops.reduce((a, o) => a + o.estMin, 0);
+    let target = Math.min(1, Math.max(0, fraction)) * totalEstMin;
+    for (const op of ops) {
+      if (target <= op.estMin) {
+        const within = op.estMin > 0 ? target / op.estMin : 0;
+        return Math.round(op.fromBlock + within * (op.toBlock - op.fromBlock));
+      }
+      target -= op.estMin;
+    }
+    return ops[ops.length - 1].toBlock;
+  }
+
   /** Formats a range as human text. Never returns a bare point estimate. */
   function formatRange(eta) {
     if (eta.blocked) return 'Blocked';
@@ -1689,6 +1899,9 @@ window.DOWNTIME_REASONS = [
     cycleDistribution,
     utilization,
     tendingScore,
+    operationProgress,
+    programCalibration,
+    blockAtTimeFraction,
     formatRange,
     formatClockRange,
   };
@@ -2214,6 +2427,7 @@ window.DOWNTIME_REASONS = [
     machine.setupRemainingMin = job.setupMin;
     machine.cycleElapsedMin = 0;
     machine.cycleTargetMin = null;
+    if (machine.telemetry) { machine.telemetry.block = 0; machine.telemetry.tool = '—'; }
     setState(state, machine, 'SETUP', { actor: currentActor(state).name, role: currentActor(state).role, detail: `started ${job.wo}` });
     record(state, {
       machineId,
@@ -2607,11 +2821,20 @@ window.DOWNTIME_REASONS = [
         }
         machine.cycleElapsedMin += elapsedSimMin;
 
+        // Stand in for the controller reporting its current sequence number.
+        if (machine.telemetry && machine.active.operations) {
+          const fraction = machine.cycleElapsedMin / machine.cycleTargetMin;
+          machine.telemetry.block = A.blockAtTimeFraction(machine.active.operations, fraction);
+          const progress = A.operationProgress(machine);
+          machine.telemetry.tool = progress && progress.current ? progress.current.tool : '—';
+        }
+
         if (machine.cycleElapsedMin >= machine.cycleTargetMin) {
           machine.history.cycles.push({ wo: machine.active.wo, min: Number(machine.cycleTargetMin.toFixed(2)), at: now });
           machine.active.done = Math.min(machine.active.qty, machine.active.done + 1);
           machine.cycleElapsedMin = 0;
           machine.cycleTargetMin = null;
+          if (machine.telemetry) machine.telemetry.block = 1;
 
           if (machine.active.done >= machine.active.qty) {
             record(state, {
@@ -2940,6 +3163,90 @@ window.DOWNTIME_REASONS = [
    * `controls` is on for the machinist only. They own this queue (docs/05,
    * step 4) and reorder it directly — everyone else has to ask.
    */
+  /**
+   * In-cycle progress: which operation is running and how far through the part.
+   *
+   * This is derived entirely from data the controller already reports (the
+   * executing block number) plus the CAMWorks operation list. Nothing is typed
+   * in by anyone.
+   */
+  /** One-line in-cycle position for the stat row. */
+  function inCycleSummary(machine) {
+    const p = A.operationProgress(machine);
+    if (!p) return 'No op list';
+    if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} ops planned`;
+    return `Op ${p.current.seq}/${p.ops.length} · ${Math.round(p.percent * 100)}%`;
+  }
+
+  /** Summary line for the operations section header. */
+  function operationMeta(machine) {
+    const p = A.operationProgress(machine);
+    if (!p) return 'no operation list';
+    if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} operations planned`;
+    return `op ${p.current.seq} of ${p.ops.length} · ${Math.round(p.percent * 100)}% through the part`;
+  }
+
+  function operationStrip(machine) {
+    const p = A.operationProgress(machine);
+    if (!p) {
+      return `<p class="empty">No operation list for ${esc(machine.active.wo)}. Attach the CAMWorks operation list
+        to see which operation is running and how far through the part the machine is.</p>`;
+    }
+
+    const cutting = machine.state === 'PRODUCTION';
+    const calib = p.calibration;
+
+    const header = p.current && cutting
+      ? `<div class="op-headline">
+          <div>
+            <div class="label">Operation ${esc(p.current.seq)} of ${esc(p.ops.length)}</div>
+            <div class="op-name">${esc(p.current.name)}</div>
+            <div class="muted small">${esc(p.current.tool)} · block ${esc(p.block.toLocaleString())} of ${esc(p.totalBlocks.toLocaleString())}</div>
+          </div>
+          <div class="right-align">
+            <div class="label">${p.scope === 'JOB' ? 'Through the whole job' : 'Through this part'}</div>
+            <div class="op-percent">${Math.round(p.percent * 100)}%</div>
+            <div class="muted small">~${esc(p.remainingMin.toFixed(1))} min left ${p.scope === 'JOB' ? 'on the whole job' : 'on this piece'}</div>
+          </div>
+        </div>`
+      : `<p class="notice">${cutting ? 'Waiting for the first block of the cycle.' : `Not cutting — the operation list below is the plan for ${esc(machine.active.wo)}.`}</p>`;
+
+    const rows = p.ops.map((op, i) => {
+      const state = !cutting || p.currentIndex < 0 ? 'pending'
+        : i < p.currentIndex ? 'done'
+          : i === p.currentIndex ? 'active' : 'pending';
+      const fill = state === 'done' ? 100 : state === 'active' ? Math.round(p.withinOp * 100) : 0;
+      return `<li class="op ${esc(state)}">
+        <span class="op-seq" aria-hidden="true">${esc(op.seq)}</span>
+        <span class="op-main">
+          <span class="op-title">${esc(op.name)}</span>
+          <span class="muted small">${esc(op.tool)} · blocks ${esc(op.fromBlock.toLocaleString())}–${esc(op.toBlock.toLocaleString())}</span>
+          <span class="track op-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${fill}"
+            aria-label="${esc(op.name)} progress"><span class="bar" style="width:${fill}%"></span></span>
+        </span>
+        <span class="op-est muted">${esc(op.estMin.toFixed(1))} min est</span>
+      </li>`;
+    }).join('');
+
+    const calibration = calib
+      ? `<p class="notice ${Math.abs(calib.variancePct) > 15 ? 'warn' : 'ok'}">
+          <strong>CAM estimate vs measured:</strong> CAMWorks says ${esc(calib.estMin.toFixed(1))} min,
+          this machine actually runs ${esc(calib.actualMin.toFixed(1))} min —
+          ${calib.variancePct >= 0 ? '+' : ''}${esc(calib.variancePct.toFixed(0))}% over ${esc(calib.samples)} cycles.
+          Remaining time above is rescaled by that factor, so the estimate corrects itself.</p>`
+      : `<p class="notice">Fewer than three measured cycles for ${esc(machine.active.wo)} — remaining time is still the raw
+          CAMWorks estimate. It rescales itself against measured runs once there are enough.</p>`;
+
+    return `${header}
+      <ol class="ops">${rows}</ol>
+      ${calibration}
+      <p class="muted small">${p.scope === 'JOB'
+        ? 'This posted file runs the whole quantity in one go, so the figures above are for the entire job.'
+        : 'This posted file makes one piece and is re-run for each. The figures above are for the piece being cut now.'}</p>
+      <p class="muted small">Source: ${esc(machine.active.camSource ?? 'CAM operation list')} ·
+        live block number from the ${esc(machine.collector.protocol)} collector. Read-only; nothing is sent to the machine.</p>`;
+  }
+
   function queueList(state, machine, now, controls = false) {
     if (!machine.queue.length) {
       return `<p class="empty">No queued work. The machine will go idle when the current job finishes.</p>
@@ -3206,14 +3513,16 @@ window.DOWNTIME_REASONS = [
         button and on the leadership board until someone answers.
         <button class="btn small" data-act="open-downtime" data-focus-key="open-downtime">Give a reason</button></p>` : ''}
       ${otherMachinesNeedingReason(state, machine.id)}
-      <div class="stats four">
+      <div class="stats five">
         <div class="stat"><div class="label">Active job</div><div class="value">${esc(machine.active.wo)}</div></div>
         <div class="stat"><div class="label">Progress</div><div class="value">${pct(machine)}%<span class="unit"> · ${esc(machine.active.qty - machine.active.done)} left</span></div></div>
         <div class="stat"><div class="label">Advisory completion</div><div class="value small-value">${esc(A.formatRange(eta))}</div></div>
+        <div class="stat"><div class="label">In this part</div><div class="value small-value">${esc(inCycleSummary(machine))}</div></div>
         <div class="stat"><div class="label">Awaiting your decision</div><div class="value">${pending}</div></div>
       </div>
       <div class="content">
         ${section(state, `m-job-${machine.id}`, 'Current job', `${pct(machine)}% complete`, jobCard(state, machine, now, true), true)}
+        ${section(state, `m-ops-${machine.id}`, 'Operations in this part', operationMeta(machine), operationStrip(machine), true)}
         ${section(state, `m-queue-${machine.id}`, 'Approved executable queue', `${machine.queue.length} queued${deferred ? ` · ${deferred} deferred change pending` : ''}`, queueList(state, machine, now, true), true)}
         ${section(state, `m-req-${machine.id}`, 'Queue-change requests', `${pending} to approve`, requestList(state, machine, true), pending > 0 || deferred > 0)}
         ${section(state, `m-down-${machine.id}`, 'Downtime and exceptions', machine.downtime ? machine.downtime.label : machine.state, downtimePanel(state, machine, now), A.BLOCKED_STATES.includes(machine.state))}
@@ -3235,6 +3544,7 @@ window.DOWNTIME_REASONS = [
       </div>
       <div class="content">
         ${section(state, `e-job-${machine.id}`, 'Current status', 'read only', jobCard(state, machine, now, true), true)}
+        ${section(state, `e-ops-${machine.id}`, 'Operations in this part', operationMeta(machine), operationStrip(machine), true)}
         ${section(state, `e-analytics-${machine.id}`, 'Process analytics', 'shift to date', engineeringAnalytics(state, machine, now), true)}
         ${section(state, `e-queue-${machine.id}`, 'Approved executable queue', 'machinist controlled', queueList(state, machine, now), false)}
         ${section(state, `e-req-${machine.id}`, 'Request history', `${pending} pending`, requestList(state, machine, false), false)}
@@ -3302,6 +3612,7 @@ window.DOWNTIME_REASONS = [
     machineStrip,
     reasonGrid,
     queueList,
+    operationStrip,
     machinistPanel,
     engineerPanel,
     leadershipPanel,

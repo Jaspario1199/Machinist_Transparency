@@ -39,7 +39,10 @@ Status: **Open** (needs a decision) · **Blocked** (waiting on evidence) ·
 | D-19 | Who may assign a released order to a machine — machinist only, or supervisor too? | **Open** | Production supervisor | Phase 4 permissions | The demo allows the machinist; docs/05 allows a designated supervisor as well |
 | D-20 | How long may unplanned work stay without an attached work order before it escalates? | **Open** | Manufacturing owner | Phase 5 reporting | Without a limit, `UNPLANNED-nnn` becomes a permanent shadow backlog |
 | D-21 | Is a routing deviation acceptable with a recorded acknowledgement, or does it need supervisor approval? | **Open** | Manufacturing engineering | Phase 4 | The demo allows it with an audited acknowledgement |
-| D-22 | Do we ever want theoretical cycle time estimated from the G-code, and if so bought or built? | **Open** | Manufacturing engineering | Phase 5+ analytics, not the pilot | See the resolved note D-23 for the recommendation and the reasoning |
+| D-22 | Do we ever want theoretical cycle time estimated from the G-code, and if so bought or built? | **Resolved, see D-24** | Manufacturing engineering | — | Superseded once it became clear CAMWorks already produces the estimate |
+| D-25 | Does this platform become the home of the CNC operation plan, which today lives nowhere systematic? | **Open** | Manufacturing owner + business systems | Phase 4 architecture | Machinists author operations in CAMWorks; D365/Bluestar do not hold them. This is a vacuum, not a system-of-record conflict — but filling it makes the platform more than a pure read-only sidecar and must be a deliberate decision |
+| D-26 | Will the CAMWorks post-processor be modified to emit operation markers? | **Open** | Manufacturing engineering | Operation-level progress | A one-time post change gives exact operation boundaries with no parsing. Without it, tool changes give approximate boundaries for free |
+| D-27 | Is a posted file one piece, or the whole quantity in one program? | **Open** | Manufacturing engineering | Progress reporting | It changes what "percent complete" means; the demo carries the answer per job rather than assuming |
 
 ## Resolved
 
@@ -106,3 +109,54 @@ exactly this reason.
 variance baseline. If a genuine theoretical number is wanted later, take it
 from CAM output or buy a simulator — do not build a G-code parser in-house. Any
 such figure must be labelled theoretical and carry a wide band.
+
+### D-24 — using CAM operation data for in-cycle progress (supersedes part of D-23)
+
+D-23 asked the wrong question. It assessed whether to **predict absolute cycle
+time** by parsing G-code, and concluded no. That conclusion still holds, and it
+is now moot: CAMWorks already produces the estimate, so nothing needs building
+to obtain one.
+
+The valuable question is different. **Where are we inside the running program?**
+That needs only the relative shape of the time curve, not its absolute
+magnitude — so every objection in D-23 (accel/decel, look-ahead, smoothing
+mode, feedrate override) largely cancels, because the platform rescales the
+curve against measured cycle time after three real runs.
+
+The shop's actual workflow makes this straightforward:
+
+> Tool paths are built in CAMWorks, posted to G-code, uploaded to the machine,
+> and run there.
+
+Two artefacts already exist at post time — the operation list with estimated
+times, and the NC file — and the shop controls the post-processor.
+
+**Getting operation boundaries, cheapest first:**
+
+1. **Tool changes only.** Zero effort, works today. The controller reports the
+   tool in the spindle; a change marks an operation boundary. Approximate when
+   one tool is used for several operations, but free.
+2. **Post-processor markers.** The best value by a distance. A one-time change
+   to the post emits an operation-start comment or a reserved N-number at each
+   boundary. Exact operations, no parsing, no ambiguity. This is the
+   recommended route.
+3. **Parse the posted file on upload.** Works without touching the post, but
+   has to infer boundaries from tool changes and comments.
+
+**Runtime signal:** the currently executing block or sequence number. MTConnect
+exposes it, FANUC FOCAS exposes the running sequence number, Okuma OSP exposes
+it. It is read-only, and it is the one field `docs/04` did not previously list.
+
+**Weight by time, not blocks.** 500 blocks of rapids take seconds; 500 blocks of
+a finish contour take minutes. In the demo, block 1,980 of 2,960 is 67% of the
+file but 63% of the time — and the gap is far larger on real 3D work.
+
+**Self-correction.** Compare CAM estimate against measured cycle time and
+rescale. This is also the theoretical-versus-actual engineering metric D-23
+identified as the genuinely valuable output, obtained as a by-product.
+
+**Recommendation:** capture the CAMWorks operation list at post time, read the
+block number from the controller, weight progress by estimated time, and
+rescale against measured runs. Store the derived operation map and time
+data — **not** the program body — so the platform does not become an
+uncontrolled repository of controlled documents.

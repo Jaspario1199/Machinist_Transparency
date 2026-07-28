@@ -163,6 +163,90 @@
    * `controls` is on for the machinist only. They own this queue (docs/05,
    * step 4) and reorder it directly — everyone else has to ask.
    */
+  /**
+   * In-cycle progress: which operation is running and how far through the part.
+   *
+   * This is derived entirely from data the controller already reports (the
+   * executing block number) plus the CAMWorks operation list. Nothing is typed
+   * in by anyone.
+   */
+  /** One-line in-cycle position for the stat row. */
+  function inCycleSummary(machine) {
+    const p = A.operationProgress(machine);
+    if (!p) return 'No op list';
+    if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} ops planned`;
+    return `Op ${p.current.seq}/${p.ops.length} · ${Math.round(p.percent * 100)}%`;
+  }
+
+  /** Summary line for the operations section header. */
+  function operationMeta(machine) {
+    const p = A.operationProgress(machine);
+    if (!p) return 'no operation list';
+    if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} operations planned`;
+    return `op ${p.current.seq} of ${p.ops.length} · ${Math.round(p.percent * 100)}% through the part`;
+  }
+
+  function operationStrip(machine) {
+    const p = A.operationProgress(machine);
+    if (!p) {
+      return `<p class="empty">No operation list for ${esc(machine.active.wo)}. Attach the CAMWorks operation list
+        to see which operation is running and how far through the part the machine is.</p>`;
+    }
+
+    const cutting = machine.state === 'PRODUCTION';
+    const calib = p.calibration;
+
+    const header = p.current && cutting
+      ? `<div class="op-headline">
+          <div>
+            <div class="label">Operation ${esc(p.current.seq)} of ${esc(p.ops.length)}</div>
+            <div class="op-name">${esc(p.current.name)}</div>
+            <div class="muted small">${esc(p.current.tool)} · block ${esc(p.block.toLocaleString())} of ${esc(p.totalBlocks.toLocaleString())}</div>
+          </div>
+          <div class="right-align">
+            <div class="label">${p.scope === 'JOB' ? 'Through the whole job' : 'Through this part'}</div>
+            <div class="op-percent">${Math.round(p.percent * 100)}%</div>
+            <div class="muted small">~${esc(p.remainingMin.toFixed(1))} min left ${p.scope === 'JOB' ? 'on the whole job' : 'on this piece'}</div>
+          </div>
+        </div>`
+      : `<p class="notice">${cutting ? 'Waiting for the first block of the cycle.' : `Not cutting — the operation list below is the plan for ${esc(machine.active.wo)}.`}</p>`;
+
+    const rows = p.ops.map((op, i) => {
+      const state = !cutting || p.currentIndex < 0 ? 'pending'
+        : i < p.currentIndex ? 'done'
+          : i === p.currentIndex ? 'active' : 'pending';
+      const fill = state === 'done' ? 100 : state === 'active' ? Math.round(p.withinOp * 100) : 0;
+      return `<li class="op ${esc(state)}">
+        <span class="op-seq" aria-hidden="true">${esc(op.seq)}</span>
+        <span class="op-main">
+          <span class="op-title">${esc(op.name)}</span>
+          <span class="muted small">${esc(op.tool)} · blocks ${esc(op.fromBlock.toLocaleString())}–${esc(op.toBlock.toLocaleString())}</span>
+          <span class="track op-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${fill}"
+            aria-label="${esc(op.name)} progress"><span class="bar" style="width:${fill}%"></span></span>
+        </span>
+        <span class="op-est muted">${esc(op.estMin.toFixed(1))} min est</span>
+      </li>`;
+    }).join('');
+
+    const calibration = calib
+      ? `<p class="notice ${Math.abs(calib.variancePct) > 15 ? 'warn' : 'ok'}">
+          <strong>CAM estimate vs measured:</strong> CAMWorks says ${esc(calib.estMin.toFixed(1))} min,
+          this machine actually runs ${esc(calib.actualMin.toFixed(1))} min —
+          ${calib.variancePct >= 0 ? '+' : ''}${esc(calib.variancePct.toFixed(0))}% over ${esc(calib.samples)} cycles.
+          Remaining time above is rescaled by that factor, so the estimate corrects itself.</p>`
+      : `<p class="notice">Fewer than three measured cycles for ${esc(machine.active.wo)} — remaining time is still the raw
+          CAMWorks estimate. It rescales itself against measured runs once there are enough.</p>`;
+
+    return `${header}
+      <ol class="ops">${rows}</ol>
+      ${calibration}
+      <p class="muted small">${p.scope === 'JOB'
+        ? 'This posted file runs the whole quantity in one go, so the figures above are for the entire job.'
+        : 'This posted file makes one piece and is re-run for each. The figures above are for the piece being cut now.'}</p>
+      <p class="muted small">Source: ${esc(machine.active.camSource ?? 'CAM operation list')} ·
+        live block number from the ${esc(machine.collector.protocol)} collector. Read-only; nothing is sent to the machine.</p>`;
+  }
+
   function queueList(state, machine, now, controls = false) {
     if (!machine.queue.length) {
       return `<p class="empty">No queued work. The machine will go idle when the current job finishes.</p>
@@ -429,14 +513,16 @@
         button and on the leadership board until someone answers.
         <button class="btn small" data-act="open-downtime" data-focus-key="open-downtime">Give a reason</button></p>` : ''}
       ${otherMachinesNeedingReason(state, machine.id)}
-      <div class="stats four">
+      <div class="stats five">
         <div class="stat"><div class="label">Active job</div><div class="value">${esc(machine.active.wo)}</div></div>
         <div class="stat"><div class="label">Progress</div><div class="value">${pct(machine)}%<span class="unit"> · ${esc(machine.active.qty - machine.active.done)} left</span></div></div>
         <div class="stat"><div class="label">Advisory completion</div><div class="value small-value">${esc(A.formatRange(eta))}</div></div>
+        <div class="stat"><div class="label">In this part</div><div class="value small-value">${esc(inCycleSummary(machine))}</div></div>
         <div class="stat"><div class="label">Awaiting your decision</div><div class="value">${pending}</div></div>
       </div>
       <div class="content">
         ${section(state, `m-job-${machine.id}`, 'Current job', `${pct(machine)}% complete`, jobCard(state, machine, now, true), true)}
+        ${section(state, `m-ops-${machine.id}`, 'Operations in this part', operationMeta(machine), operationStrip(machine), true)}
         ${section(state, `m-queue-${machine.id}`, 'Approved executable queue', `${machine.queue.length} queued${deferred ? ` · ${deferred} deferred change pending` : ''}`, queueList(state, machine, now, true), true)}
         ${section(state, `m-req-${machine.id}`, 'Queue-change requests', `${pending} to approve`, requestList(state, machine, true), pending > 0 || deferred > 0)}
         ${section(state, `m-down-${machine.id}`, 'Downtime and exceptions', machine.downtime ? machine.downtime.label : machine.state, downtimePanel(state, machine, now), A.BLOCKED_STATES.includes(machine.state))}
@@ -458,6 +544,7 @@
       </div>
       <div class="content">
         ${section(state, `e-job-${machine.id}`, 'Current status', 'read only', jobCard(state, machine, now, true), true)}
+        ${section(state, `e-ops-${machine.id}`, 'Operations in this part', operationMeta(machine), operationStrip(machine), true)}
         ${section(state, `e-analytics-${machine.id}`, 'Process analytics', 'shift to date', engineeringAnalytics(state, machine, now), true)}
         ${section(state, `e-queue-${machine.id}`, 'Approved executable queue', 'machinist controlled', queueList(state, machine, now), false)}
         ${section(state, `e-req-${machine.id}`, 'Request history', `${pending} pending`, requestList(state, machine, false), false)}
@@ -525,6 +612,7 @@
     machineStrip,
     reasonGrid,
     queueList,
+    operationStrip,
     machinistPanel,
     engineerPanel,
     leadershipPanel,

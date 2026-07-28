@@ -258,6 +258,122 @@
     };
   }
 
+
+  // --------------------------------------- in-cycle progress from the NC file ---
+
+  /**
+   * Where are we inside the current part?
+   *
+   * The controller reports the block (sequence) it is executing right now —
+   * MTConnect exposes it, FANUC FOCAS exposes it via the running sequence
+   * number, Okuma OSP exposes it. The CAMWorks operation list gives each
+   * operation a block range and an estimated cut time. Put together, the block
+   * number tells you which operation is running and — weighted by time, not by
+   * block count — how far through the part you are.
+   *
+   * Weighting by TIME is the whole point. 500 blocks of rapids take seconds and
+   * 500 blocks of a finish contour take minutes, so raw "block 1980 of 2960 =
+   * 67%" would be badly wrong. Cumulative estimated minutes is right.
+   *
+   * The absolute accuracy of the CAM estimate barely matters here. It supplies
+   * the SHAPE of the curve; `calibration` rescales the magnitude against what
+   * this machine actually does, so the systematic optimism of any static
+   * estimate cancels out after a few real cycles.
+   */
+  function operationProgress(machine) {
+    const ops = machine.active.operations;
+    if (!ops || !ops.length) return null;
+
+    const totalEstMin = ops.reduce((a, o) => a + o.estMin, 0);
+    const totalBlocks = ops[ops.length - 1].toBlock;
+    const block = machine.telemetry ? machine.telemetry.block : 0;
+    /**
+     * 'PART' — the posted file makes one piece and is re-run per piece.
+     * 'JOB'  — the posted file runs the whole quantity in one go.
+     * The block number means a different thing in each case, so the scope is
+     * carried on the job rather than assumed.
+     */
+    const scope = machine.active.programScope === 'JOB' ? 'JOB' : 'PART';
+
+    if (!block) {
+      return {
+        ops, totalEstMin, totalBlocks, block: 0, scope,
+        current: null, currentIndex: -1, withinOp: 0,
+        elapsedEstMin: 0, percent: 0, remainingEstMin: totalEstMin,
+        calibration: null, remainingMin: totalEstMin,
+      };
+    }
+
+    let index = ops.findIndex((o) => block >= o.fromBlock && block <= o.toBlock);
+    if (index < 0) index = block > totalBlocks ? ops.length - 1 : 0;
+    const current = ops[index];
+
+    const span = Math.max(1, current.toBlock - current.fromBlock);
+    const withinOp = Math.min(1, Math.max(0, (block - current.fromBlock) / span));
+    const elapsedEstMin = ops.slice(0, index).reduce((a, o) => a + o.estMin, 0) + withinOp * current.estMin;
+
+    const calibration = programCalibration(machine, totalEstMin);
+    const remainingEstMin = Math.max(0, totalEstMin - elapsedEstMin);
+
+    return {
+      ops,
+      totalEstMin,
+      totalBlocks,
+      block,
+      scope,
+      current,
+      currentIndex: index,
+      withinOp,
+      elapsedEstMin,
+      percent: totalEstMin > 0 ? elapsedEstMin / totalEstMin : 0,
+      remainingEstMin,
+      calibration,
+      remainingMin: remainingEstMin * (calibration ? calibration.factor : 1),
+    };
+  }
+
+  /**
+   * How wrong is the CAM estimate on this machine, measured?
+   *
+   * Returns null until there are enough observed cycles to say. This is what
+   * turns a theoretical number into a trustworthy one without anyone having to
+   * model accel/decel, look-ahead or feedrate override — the machine measures
+   * all of that for us.
+   */
+  function programCalibration(machine, totalEstMin) {
+    const observed = machine.history.cycles
+      .filter((c) => c.wo === machine.active.wo)
+      .map((c) => c.min);
+    if (observed.length < 3 || !totalEstMin) return null;
+
+    const actual = median(observed);
+    return {
+      samples: observed.length,
+      estMin: totalEstMin,
+      actualMin: actual,
+      factor: actual / totalEstMin,
+      variancePct: ((actual - totalEstMin) / totalEstMin) * 100,
+    };
+  }
+
+  /**
+   * The inverse: which block corresponds to a given fraction of cycle time.
+   * The simulated collector uses this to report a plausible block number.
+   */
+  function blockAtTimeFraction(ops, fraction) {
+    if (!ops || !ops.length) return 0;
+    const totalEstMin = ops.reduce((a, o) => a + o.estMin, 0);
+    let target = Math.min(1, Math.max(0, fraction)) * totalEstMin;
+    for (const op of ops) {
+      if (target <= op.estMin) {
+        const within = op.estMin > 0 ? target / op.estMin : 0;
+        return Math.round(op.fromBlock + within * (op.toBlock - op.fromBlock));
+      }
+      target -= op.estMin;
+    }
+    return ops[ops.length - 1].toBlock;
+  }
+
   /** Formats a range as human text. Never returns a bare point estimate. */
   function formatRange(eta) {
     if (eta.blocked) return 'Blocked';
@@ -286,6 +402,9 @@
     cycleDistribution,
     utilization,
     tendingScore,
+    operationProgress,
+    programCalibration,
+    blockAtTimeFraction,
     formatRange,
     formatClockRange,
   };

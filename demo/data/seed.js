@@ -36,6 +36,27 @@
     return out;
   }
 
+  /**
+   * A CAMWorks operation list, as posted alongside the program.
+   *
+   * Each operation carries the block range it occupies in the NC file and the
+   * estimated cut time CAMWorks produced. Together these are a time map: given
+   * the block number the controller is currently executing, you can say which
+   * operation is running and what fraction of the cycle is behind you.
+   *
+   * The estimate does not need to be accurate in absolute terms — see
+   * docs/13 D-23. It only needs the right SHAPE, because the platform rescales
+   * it against measured cycle time after a few real runs.
+   */
+  function operations(list) {
+    let block = 1;
+    return list.map(([name, tool, estMin, blocks], i) => {
+      const op = { seq: i + 1, name, tool, estMin, fromBlock: block, toBlock: block + blocks - 1 };
+      block += blocks;
+      return op;
+    });
+  }
+
   window.MT_SEED = function buildSeed(now) {
     const shiftStart = now - 8 * HOUR;
     const random = rng(20481);
@@ -100,6 +121,7 @@
           model: 'Haas VF-2SS',
           controller: 'Haas NGC 100.21',
           collector: { protocol: 'MTConnect', online: true, lastEventAt: now - 2000 },
+          telemetry: { block: 1980, tool: 'T6 — 8 mm end mill', feedOverride: 100 },
           state: 'PRODUCTION',
           stateSince: now - 42 * MIN,
           setupRemainingMin: 0,
@@ -116,6 +138,15 @@
             path: 'FS1 / Sensor Housing A / Rev C',
             requestedPriority: 3,
             dueAt: now + 26 * HOUR,
+            camSource: 'CAMWorks 2026 · posted 3 days ago',
+            operations: operations([
+              ['Face top', 'T1 — 63 mm face mill', 0.9, 180],
+              ['Rough pocket', 'T4 — 12 mm end mill', 3.2, 1270],
+              ['Finish profile', 'T6 — 8 mm end mill', 2.1, 1150],
+              ['Spot drill', 'T2 — 90° spot', 0.5, 100],
+              ['Drill 4 × \u00d85', 'T7 — 5 mm drill', 0.8, 160],
+              ['Chamfer', 'T9 — chamfer mill', 0.5, 100],
+            ]),
           },
           queue: [
             { wo: 'WO-20503', part: 'Adapter Plate', qty: 24, cycleMedianMin: 6.5, cycleSigmaMin: 0.5, setupMin: 25, program: 'O20503', ready: 'Material ready', readyCode: 'READY', requestedPriority: 4, dueAt: now + 50 * HOUR },
@@ -141,6 +172,7 @@
           model: 'Doosan DNM 5700',
           controller: 'FANUC 31i-B5',
           collector: { protocol: 'FOCAS', online: true, lastEventAt: now - 4000 },
+          telemetry: { block: 0, tool: '—', feedOverride: 100 },
           state: 'SETUP',
           stateSince: now - 18 * MIN,
           setupRemainingMin: 22,
@@ -157,6 +189,14 @@
             path: 'FS1 / Probe Bracket / Rev B',
             requestedPriority: 2,
             dueAt: now + 30 * HOUR,
+            camSource: 'CAMWorks 2026 · posted this morning',
+            operations: operations([
+              ['Face and square', 'T1 — 50 mm face mill', 1.1, 210],
+              ['Rough profile', 'T4 — 10 mm end mill', 3.6, 1480],
+              ['Finish profile', 'T6 — 6 mm end mill', 2.4, 1220],
+              ['Drill 2 × \u00d86.8', 'T7 — 6.8 mm drill', 1.2, 190],
+              ['Tap M8', 'T8 — M8 tap', 0.7, 90],
+            ]),
           },
           queue: [
             { wo: 'WO-20524', part: 'Cover Plate', qty: 30, cycleMedianMin: 5, cycleSigmaMin: 0.4, setupMin: 20, program: 'O20524', ready: 'Material ready', readyCode: 'READY', requestedPriority: 3, dueAt: now + 44 * HOUR },
@@ -184,6 +224,7 @@
           model: 'Okuma LB3000',
           controller: 'OSP-P300L',
           collector: { protocol: 'MTConnect', online: true, lastEventAt: now - 3000 },
+          telemetry: { block: 700, tool: 'T5 — 60° threading', feedOverride: 100 },
           state: 'STOPPED',
           stateSince: now - 9 * MIN,
           setupRemainingMin: 0,
@@ -200,6 +241,13 @@
             path: 'FS1 / Threaded Stem / Rev A',
             requestedPriority: 2,
             dueAt: now + 12 * HOUR,
+            camSource: 'CAMWorks 2026 · posted last week',
+            operations: operations([
+              ['Face and rough OD', 'T1 — CNMG rougher', 1.4, 320],
+              ['Finish OD', 'T3 — DNMG finisher', 0.9, 320],
+              ['Single-point thread', 'T5 — 60° threading', 1.2, 340],
+              ['Part off', 'T7 — 3 mm parting', 0.5, 100],
+            ]),
           },
           queue: [
             { wo: 'WO-20508', part: 'Shaft Collar', qty: 50, cycleMedianMin: 3.2, cycleSigmaMin: 0.2, setupMin: 18, program: 'O20508', ready: 'Material ready', readyCode: 'READY', requestedPriority: 3, dueAt: now + 40 * HOUR },

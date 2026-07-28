@@ -516,6 +516,7 @@
     machine.setupRemainingMin = job.setupMin;
     machine.cycleElapsedMin = 0;
     machine.cycleTargetMin = null;
+    if (machine.telemetry) { machine.telemetry.block = 0; machine.telemetry.tool = '—'; }
     setState(state, machine, 'SETUP', { actor: currentActor(state).name, role: currentActor(state).role, detail: `started ${job.wo}` });
     record(state, {
       machineId,
@@ -909,11 +910,20 @@
         }
         machine.cycleElapsedMin += elapsedSimMin;
 
+        // Stand in for the controller reporting its current sequence number.
+        if (machine.telemetry && machine.active.operations) {
+          const fraction = machine.cycleElapsedMin / machine.cycleTargetMin;
+          machine.telemetry.block = A.blockAtTimeFraction(machine.active.operations, fraction);
+          const progress = A.operationProgress(machine);
+          machine.telemetry.tool = progress && progress.current ? progress.current.tool : '—';
+        }
+
         if (machine.cycleElapsedMin >= machine.cycleTargetMin) {
           machine.history.cycles.push({ wo: machine.active.wo, min: Number(machine.cycleTargetMin.toFixed(2)), at: now });
           machine.active.done = Math.min(machine.active.qty, machine.active.done + 1);
           machine.cycleElapsedMin = 0;
           machine.cycleTargetMin = null;
+          if (machine.telemetry) machine.telemetry.block = 1;
 
           if (machine.active.done >= machine.active.qty) {
             record(state, {

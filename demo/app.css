@@ -629,6 +629,52 @@ textarea { min-height: 80px; resize: vertical; }
 
 
 
+/* --------------------------------------------------- operations in a part */
+
+.op-headline {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: var(--soft);
+}
+.op-name { font-size: 1.1rem; font-weight: 800; margin-top: 2px; }
+.op-percent { font-size: 1.6rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+
+.ops { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.op {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.op.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
+.op.done { opacity: .62; }
+.op-seq {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 7px; font-weight: 850; font-size: .82rem;
+}
+.op.active .op-seq { background: var(--blue-solid); color: #fff; }
+.op.done .op-seq { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
+.op-main { flex: 1; display: grid; gap: 3px; min-width: 0; }
+.op-title { font-weight: 700; }
+.op-track { height: 6px; }
+.op-est { flex: none; font-size: .82rem; font-variant-numeric: tabular-nums; }
+
+.stats.five { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 900px) {
+  .stats.five { grid-template-columns: repeat(2, 1fr); }
+  .op { flex-wrap: wrap; }
+}
+
 /* ------------------------------------------------------------ adding work */
 
 .source-tabs { margin-bottom: 14px; }

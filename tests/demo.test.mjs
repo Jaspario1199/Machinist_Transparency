@@ -1120,3 +1120,100 @@ test('the ETA says where its numbers came from, and does not claim measurement i
   assert.match(basis, /standard from the D365 routing/);
   assert.doesNotMatch(basis, /0 planned cycles/, 'must not report a measurement it never made');
 });
+
+// ----------------------------------------- in-cycle progress from the NC file ---
+
+test('the block number reported by the controller identifies the running operation', async () => {
+  const page = await open();
+  await openSections(page);
+
+  const headline = (await page.textContent('.op-headline')).replace(/\s+/g, ' ');
+  assert.match(headline, /Operation 3 of 6/, 'the active operation must be identified');
+  assert.match(headline, /Finish profile/);
+  assert.match(headline, /T6 — 8 mm end mill/, 'the tool in the spindle comes with it');
+  assert.match(headline, /block 1,980 of 2,960/);
+
+  const ops = await page.$$eval('.op', (els) => els.map((e) => e.className));
+  assert.deepEqual(ops, ['op done', 'op done', 'op active', 'op pending', 'op pending', 'op pending'],
+    'operations before the current one are done, after it are pending');
+});
+
+test('progress is weighted by time, not by block count', async () => {
+  const page = await open();
+  const figures = await page.evaluate(() => {
+    const m = window.MT_DEBUG.getState().machines[0];
+    const p = window.MT_ANALYTICS.operationProgress(m);
+    return { rawBlockPct: p.block / p.totalBlocks, timePct: p.percent };
+  });
+  // 500 blocks of rapids and 500 blocks of a finish contour take very different
+  // times, so a raw block percentage is the wrong number to show.
+  assert.notEqual(Math.round(figures.rawBlockPct * 100), Math.round(figures.timePct * 100));
+  assert.equal(Math.round(figures.timePct * 100), 63);
+});
+
+test('the CAM estimate is rescaled against what the machine actually does', async () => {
+  const page = await open();
+  await openSections(page);
+  const calibration = await page.evaluate(() =>
+    window.MT_ANALYTICS.operationProgress(window.MT_DEBUG.getState().machines[0]).calibration);
+
+  assert.ok(calibration, 'with enough cycles there must be a measured correction');
+  assert.ok(calibration.samples >= 3);
+  assert.equal(typeof calibration.factor, 'number');
+  assert.match(await page.textContent('#panel .op-headline ~ * , #panel'), /CAM estimate vs measured/);
+
+  // Under three cycles it must say so rather than imply a correction it has not made.
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.machines[0].history.cycles = [];
+    window.MT_DEBUG.setState(s);
+  });
+  await openSections(page);
+  assert.match(await page.textContent('#panel'), /Fewer than three measured cycles/);
+});
+
+test('progress advances from the collector alone as the program runs', async () => {
+  const page = await open();
+  const readings = [];
+  for (let i = 0; i < 4; i += 1) {
+    await page.evaluate(() => window.MT_DEBUG.tick(1.5));
+    readings.push(await page.evaluate(() => {
+      const m = window.MT_DEBUG.getState().machines[0];
+      const p = window.MT_ANALYTICS.operationProgress(m);
+      return { seq: p.current.seq, block: p.block, tool: m.telemetry.tool };
+    }));
+  }
+  assert.ok(readings[3].block > readings[0].block, 'the block number must advance');
+  assert.ok(readings[3].seq >= readings[0].seq, 'operations must progress in order');
+  assert.ok(readings.some((r, i) => i > 0 && r.seq !== readings[i - 1].seq), 'the operation must change during a cycle');
+  assert.match(readings[3].tool, /^T\d/, 'the reported tool must follow the operation');
+});
+
+test('a job with no CAM operation list says so instead of inventing progress', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    delete s.machines[0].active.operations;
+    window.MT_DEBUG.setState(s);
+  });
+  await openSections(page);
+  assert.match(await page.textContent('#panel .empty'), /No operation list for WO-20481/);
+  assert.equal(await page.evaluate(() =>
+    window.MT_ANALYTICS.operationProgress(window.MT_DEBUG.getState().machines[0])), null);
+});
+
+test('the wording follows whether the posted file makes one part or the whole job', async () => {
+  const page = await open();
+  await openSections(page);
+  assert.match(await page.textContent('#panel'), /makes one piece and is re-run for each/);
+
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.machines[0].active.programScope = 'JOB';
+    window.MT_DEBUG.setState(s);
+  });
+  await openSections(page);
+  const body = await page.textContent('#panel');
+  assert.match(body, /Through the whole job/);
+  assert.match(body, /runs the whole quantity in one go/);
+});
