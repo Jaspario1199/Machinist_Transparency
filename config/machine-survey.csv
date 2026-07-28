@@ -1,0 +1,4 @@
+machine_id,display_name,manufacturer,model,controller,controller_version,year,ethernet_available,currently_networked,mtconnect,opc_ua,oem_api,license_required,accessible_states,program_number_available,alarm_code_available,part_count_available,stack_light_signals,approved_relay_signals,cabinet_voltage,candidate_part_families,average_cycle_min,operator_interventions_per_shift,pilot_priority,owner,notes
+CNC-01,,,,,,,,,,,,,,,,,,,,,,,,,,
+CNC-02,,,,,,,,,,,,,,,,,,,,,,,,,,
+CNC-03,,,,,,,,,,,,,,,,,,,,,,,,,,
