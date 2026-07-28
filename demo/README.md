@@ -14,15 +14,31 @@ python -m http.server 8080 --directory demo
 
 Then open `http://localhost:8080`.
 
+## Machine-first interface
+
+The page is organized for fast machinist use:
+
+1. Large buttons across the top represent each CNC.
+2. Clicking a machine opens only that machine's workspace below.
+3. The selected workspace shows five quick facts: work order, progress, remaining quantity, ETA, and queue length.
+4. Expandable sections contain:
+   - Current job and progress
+   - Approved executable queue
+   - Queue-change requests
+   - Downtime and exception reason
+   - Controller and FS1 file details
+5. Switching machines replaces the lower workspace instead of showing three dense machine cards at once.
+
 ## Demonstrated workflow
 
-1. Three simulated CNCs display current state, active job, progress, ETA, and approved executable queue.
-2. Switch to **PM / Engineer** and submit a queue-change request.
-3. Switch to **Machinist** and approve, reject, defer, or propose another position.
-4. The executable queue changes only after machinist approval.
-5. Simulate a machine stop and classify the reason with one click.
-6. Advance simulated cycles to update quantity and progress.
-7. Review the audit log for queue and exception decisions.
+1. Choose one of the three simulated CNCs.
+2. Review its state, active job, progress, ETA, and approved executable queue.
+3. Switch to **PM / Engineer** and submit a machine-specific queue-change request.
+4. Switch to **Machinist** and approve, reject, defer, or propose another position.
+5. The executable queue changes only after machinist approval.
+6. A deferred approval takes effect only after the current job finishes.
+7. Stop the selected machine and classify the downtime reason with one click.
+8. Advance simulated cycles and review the selected machine's activity log.
 
 ## Intentional limitations
 
@@ -33,4 +49,4 @@ Then open `http://localhost:8080`.
 - No database, API, notifications, or real CNC protocol.
 - ETA is intentionally simplified.
 
-These limitations keep the first review focused on user workflow and scope before production architecture is implemented.
+These limitations keep the first review focused on readability, machinist effort, and workflow before production architecture is implemented.
