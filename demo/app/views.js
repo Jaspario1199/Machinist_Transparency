@@ -66,6 +66,23 @@
 
   // ------------------------------------------------------------ ETA block ---
 
+  /**
+   * States where the numbers came from.
+   *
+   * A cold-start job has no measured cycles, so the figure is the standard from
+   * the D365 routing — which is a different kind of claim from "we have watched
+   * this run 34 times". Saying "based on 0 planned cycles" would have been
+   * both meaningless and quietly misleading.
+   */
+  function basisText(basis) {
+    if (basis.source === 'planned') {
+      return basis.count === 0
+        ? `No cycles observed yet — using the ${basis.median.toFixed(1)} min standard from the D365 routing`
+        : `Only ${basis.count} cycle${basis.count === 1 ? '' : 's'} observed — still using the ${basis.median.toFixed(1)} min routing standard`;
+    }
+    return `Measured from ${basis.count} observed cycles · median ${basis.median.toFixed(1)} min ± ${basis.sigma.toFixed(1)}`;
+  }
+
   function etaBlock(state, machine, now) {
     const eta = A.etaForActiveJob(state, machine);
     if (eta.blocked) {
@@ -78,7 +95,7 @@
       <div class="eta-range">${esc(A.formatRange(eta))}</div>
       <div class="eta-detail">${esc(A.formatClockRange(eta, now))} · ${confidenceBadge(eta.confidence)}</div>
       <div class="eta-risk"><strong>Leading risk:</strong> ${esc(eta.risk)}</div>
-      <div class="eta-basis">Based on ${esc(eta.basis.count)} ${esc(eta.basis.source)} cycles · median ${esc(eta.basis.median.toFixed(1))} min ± ${esc(eta.basis.sigma.toFixed(1))}</div>
+      <div class="eta-basis">${esc(basisText(eta.basis))}</div>
       <p class="advisory">Advisory range — not an official schedule. The committed date lives in Dynamics 365.</p>
     </div>`;
   }

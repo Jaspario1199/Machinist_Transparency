@@ -1100,3 +1100,23 @@ test('only the machinist can add or remove work', async () => {
     assert.equal((await page.$$('[data-queue-remove]')).length, 0, `${role} must not remove work directly`);
   }
 });
+
+test('the ETA says where its numbers came from, and does not claim measurement it has not made', async () => {
+  const page = await open();
+
+  // A job with history: measured.
+  assert.match(await page.textContent('#panel .eta-basis'), /Measured from \d+ observed cycles/);
+
+  // A cold-start job: the routing standard, said plainly.
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[0];
+    m.active.wo = 'WO-99999';           // nothing observed for this order
+    m.history.cycles = [];
+    window.MT_DEBUG.setState(s);
+  });
+  const basis = await page.textContent('#panel .eta-basis');
+  assert.match(basis, /No cycles observed yet/);
+  assert.match(basis, /standard from the D365 routing/);
+  assert.doesNotMatch(basis, /0 planned cycles/, 'must not report a measurement it never made');
+});
