@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Machinist Transparency — Simulated Beta</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fa;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #657087;
+      --border: #d9e0e9;
+      --navy: #123b5d;
+      --blue: #1f6feb;
+      --blue-soft: #e8f1ff;
+      --green: #1a7f37;
+      --green-soft: #dafbe1;
+      --yellow: #9a6700;
+      --yellow-soft: #fff8c5;
+      --red: #cf222e;
+      --red-soft: #ffebe9;
+      --gray-soft: #eef1f5;
+      --radius: 14px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    button, select, input { font: inherit; }
+    button { cursor: pointer; }
+    .app { min-height: 100vh; }
+    header {
+      background: var(--navy);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 3px 0 0; opacity: .78; font-size: .9rem; }
+    .role-control { display: flex; align-items: center; gap: 10px; }
+    .role-control select { padding: 9px 12px; border-radius: 9px; border: 0; }
+    main { max-width: 1500px; margin: 0 auto; padding: 22px; }
+    .toolbar {
+      display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      align-items: center; margin-bottom: 18px;
+    }
+    .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      border: 1px solid var(--border); background: white; color: var(--text);
+      padding: 9px 13px; border-radius: 9px; font-weight: 650;
+    }
+    .btn:hover { border-color: #9cabc0; }
+    .btn-primary { background: var(--blue); color: white; border-color: var(--blue); }
+    .btn-danger { background: var(--red); color: white; border-color: var(--red); }
+    .btn-success { background: var(--green); color: white; border-color: var(--green); }
+    .btn-small { padding: 7px 10px; font-size: .86rem; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; border-radius: 999px;
+      padding: 5px 9px; font-size: .78rem; font-weight: 750;
+    }
+    .badge-production { color: var(--green); background: var(--green-soft); }
+    .badge-setup { color: var(--yellow); background: var(--yellow-soft); }
+    .badge-stopped, .badge-fault { color: var(--red); background: var(--red-soft); }
+    .badge-ready, .badge-off { color: #57606a; background: var(--gray-soft); }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .metric { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 15px; }
+    .metric .label { color: var(--muted); font-size: .82rem; }
+    .metric .value { font-size: 1.55rem; font-weight: 800; margin-top: 4px; }
+    .machine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+    .machine-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .machine-head { padding: 15px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; }
+    .machine-head h2 { font-size: 1.05rem; margin: 0; }
+    .machine-head .sub { color: var(--muted); font-size: .82rem; margin-top: 3px; }
+    .machine-body { padding: 15px; }
+    .active-job { border: 1px solid var(--border); border-radius: 11px; padding: 12px; background: #fbfcfe; }
+    .active-row { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+    .work-order { font-weight: 800; }
+    .part { color: var(--muted); font-size: .86rem; margin-top: 2px; }
+    .progress-track { height: 9px; background: #e8edf3; border-radius: 999px; overflow: hidden; margin: 11px 0 6px; }
+    .progress-bar { height: 100%; background: var(--blue); }
+    .progress-label { color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+    .queue-title { margin: 16px 0 8px; display: flex; justify-content: space-between; align-items: center; }
+    .queue-title h3 { margin: 0; font-size: .92rem; }
+    .queue { display: grid; gap: 8px; }
+    .queue-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; gap: 10px; align-items: center; }
+    .position { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--gray-soft); font-weight: 800; }
+    .queue-item-main { min-width: 0; flex: 1; }
+    .queue-meta { color: var(--muted); font-size: .78rem; margin-top: 2px; }
+    .ready { color: var(--green); font-weight: 700; }
+    .blocked { color: var(--red); font-weight: 700; }
+    .pending-panel, .audit-panel, .request-panel {
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-top: 18px;
+    }
+    .section-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .section-title h2 { margin: 0; font-size: 1.04rem; }
+    .request-form { display: grid; grid-template-columns: 1.2fr 1.2fr 1fr 1.2fr auto; gap: 10px; align-items: end; }
+    label { color: var(--muted); font-size: .8rem; display: grid; gap: 5px; }
+    select, input { border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; background: white; color: var(--text); width: 100%; }
+    .request-card { border: 1px solid var(--border); border-radius: 11px; padding: 13px; display: grid; gap: 10px; }
+    .request-card + .request-card { margin-top: 9px; }
+    .request-card-top { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+    .request-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .reason-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+    .reason-grid button { min-height: 46px; }
+    .audit-list { display: grid; gap: 8px; max-height: 270px; overflow: auto; }
+    .audit-item { border-left: 3px solid var(--blue); padding: 7px 10px; background: #fbfcfe; }
+    .audit-time { color: var(--muted); font-size: .76rem; }
+    .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+    .hidden { display: none !important; }
+    .notice { background: var(--blue-soft); color: #174ea6; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; }
+    @media (max-width: 1100px) {
+      .machine-grid { grid-template-columns: 1fr; }
+      .request-form { grid-template-columns: 1fr 1fr; }
+      .reason-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 700px) {
+      main { padding: 14px; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .request-form { grid-template-columns: 1fr; }
+      .reason-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>Machinist Transparency</h1>
+      <p>Simulated three-CNC queue and visibility beta</p>
+    </div>
+    <div class="role-control">
+      <label for="role" style="color:white">Viewing as</label>
+      <select id="role">
+        <option value="machinist">Machinist</option>
+        <option value="pm">PM / Engineer</option>
+        <option value="leadership">Leadership</option>
+      </select>
+    </div>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div>
+        <strong id="roleTitle">Machinist view</strong>
+        <div style="color:var(--muted);font-size:.86rem" id="roleHelp">Run jobs normally, approve queue requests, and classify exceptions.</div>
+      </div>
+      <div class="toolbar-actions">
+        <button class="btn" id="advanceBtn">Advance simulation 1 cycle</button>
+        <button class="btn btn-danger" id="stopBtn">Simulate stop on CNC Mill 1</button>
+        <button class="btn" id="resetBtn">Reset demo</button>
+      </div>
+    </div>
+
+    <div class="metrics" id="metrics"></div>
+    <div class="machine-grid" id="machineGrid"></div>
+
+    <section class="request-panel hidden" id="requestPanel">
+      <div class="section-title">
+        <h2>Request a queue change</h2>
+        <span class="badge" style="background:var(--yellow-soft);color:var(--yellow)">Machinist approval required</span>
+      </div>
+      <div class="notice">This creates a request only. The executable queue does not change until the affected machinist approves it.</div>
+      <div class="request-form">
+        <label>Machine<select id="requestMachine"></select></label>
+        <label>Move job<select id="requestJob"></select></label>
+        <label>New position<select id="requestPosition"><option value="1">1 — Next</option><option value="2">2</option><option value="3">3</option></select></label>
+        <label>Reason<select id="requestReason"><option>Customer shipment risk</option><option>Engineering test priority</option><option>Material now available</option><option>Quality containment</option><option>Leadership request</option></select></label>
+        <button class="btn btn-primary" id="submitRequest">Submit request</button>
+      </div>
+    </section>
+
+    <section class="pending-panel" id="pendingPanel">
+      <div class="section-title">
+        <h2>Pending queue-switch requests</h2>
+        <span class="badge" id="pendingCount" style="background:var(--blue-soft);color:var(--blue)">0 pending</span>
+      </div>
+      <div id="pendingRequests"></div>
+    </section>
+
+    <section class="audit-panel">
+      <div class="section-title"><h2>Queue and exception audit log</h2></div>
+      <div class="audit-list" id="auditList"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  const initialState = {
+    role: 'machinist',
+    machines: [
+      {
+        id: 'cnc-1', name: 'CNC Mill 1', controller: 'Simulated Controller A', state: 'PRODUCTION',
+        stopReason: null,
+        active: { wo: 'WO-20481', part: 'Sensor Housing A', completed: 34, quantity: 50, cycleMin: 8, setupMin: 35 },
+        queue: [
+          { wo: 'WO-20503', part: 'Adapter Plate', quantity: 24, cycleMin: 6, setupMin: 28, readiness: 'Material ready' },
+          { wo: 'WO-20492', part: 'Valve Body', quantity: 12, cycleMin: 14, setupMin: 50, readiness: 'Waiting for tooling' },
+          { wo: 'WO-20517', part: 'Mounting Ring', quantity: 40, cycleMin: 5, setupMin: 22, readiness: 'Material not confirmed' }
+        ]
+      },
+      {
+        id: 'cnc-2', name: 'CNC Mill 2', controller: 'Simulated Controller B', state: 'SETUP',
+        stopReason: null,
+        active: { wo: 'WO-20511', part: 'Probe Bracket', completed: 0, quantity: 18, cycleMin: 9, setupMin: 42 },
+        queue: [
+          { wo: 'WO-20487', part: 'Seal Carrier', quantity: 30, cycleMin: 7, setupMin: 31, readiness: 'Material ready' },
+          { wo: 'WO-20521', part: 'Sensor Cap', quantity: 50, cycleMin: 4, setupMin: 20, readiness: 'Material ready' }
+        ]
+      },
+      {
+        id: 'cnc-3', name: 'CNC Lathe 1', controller: 'Simulated Controller C', state: 'STOPPED',
+        stopReason: 'Waiting for inspection',
+        active: { wo: 'WO-20476', part: 'Threaded Stem', completed: 16, quantity: 30, cycleMin: 11, setupMin: 38 },
+        queue: [
+          { wo: 'WO-20508', part: 'Retaining Sleeve', quantity: 36, cycleMin: 7, setupMin: 25, readiness: 'Material ready' },
+          { wo: 'WO-20499', part: 'Instrument Shaft', quantity: 10, cycleMin: 16, setupMin: 48, readiness: 'Inspection hold' }
+        ]
+      }
+    ],
+    requests: [
+      {
+        id: 1, machineId: 'cnc-1', wo: 'WO-20492', targetPosition: 1,
+        reason: 'Customer shipment risk', requester: 'PM — Demo User', status: 'PENDING', created: new Date().toISOString()
+      }
+    ],
+    audit: [
+      { time: new Date().toISOString(), text: 'Demo initialized with three simulated CNCs.' }
+    ]
+  };
+
+  let state = JSON.parse(JSON.stringify(initialState));
+
+  const $ = (id) => document.getElementById(id);
+  const role = $('role');
+  const machineGrid = $('machineGrid');
+  const metrics = $('metrics');
+  const pendingRequests = $('pendingRequests');
+  const requestPanel = $('requestPanel');
+
+  const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  const esc = (value) => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+  function addAudit(text) {
+    state.audit.unshift({ time: new Date().toISOString(), text });
+  }
+
+  function statusBadge(machine) {
+    const css = machine.state.toLowerCase();
+    const label = machine.stopReason ? `${machine.state}: ${machine.stopReason}` : machine.state;
+    return `<span class="badge badge-${css}">${esc(label)}</span>`;
+  }
+
+  function readinessClass(readiness) {
+    return readiness.toLowerCase().includes('ready') ? 'ready' : 'blocked';
+  }
+
+  function etaForMachine(machine) {
+    const activeRemaining = Math.max(0, machine.active.quantity - machine.active.completed);
+    let minutes = activeRemaining * machine.active.cycleMin;
+    if (machine.state === 'SETUP') minutes += machine.active.setupMin;
+    if (machine.state === 'STOPPED' || machine.state === 'FAULT') return 'Blocked';
+    return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  }
+
+  function renderMetrics() {
+    const producing = state.machines.filter(m => m.state === 'PRODUCTION').length;
+    const stopped = state.machines.filter(m => ['STOPPED','FAULT'].includes(m.state)).length;
+    const pending = state.requests.filter(r => r.status === 'PENDING').length;
+    const remaining = state.machines.reduce((sum, m) => sum + Math.max(0, m.active.quantity - m.active.completed), 0);
+    metrics.innerHTML = [
+      ['Producing now', producing], ['Stopped / blocked', stopped], ['Pending switch requests', pending], ['Active parts remaining', remaining]
+    ].map(([label, value]) => `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div></div>`).join('');
+  }
+
+  function renderMachines() {
+    machineGrid.innerHTML = state.machines.map(machine => {
+      const pct = Math.round((machine.active.completed / machine.active.quantity) * 100);
+      const downtimeControls = state.role === 'machinist' && ['STOPPED','FAULT'].includes(machine.state)
+        ? `<div class="reason-grid" data-machine="${machine.id}">
+            ${['Setup','Material','Inspection','Tooling','Machine fault','Chips / coolant','Engineering question','Waiting for operator','No work','Other']
+              .map(reason => `<button class="btn btn-small reason-btn" data-reason="${esc(reason)}">${esc(reason)}</button>`).join('')}
+          </div>` : '';
+      return `<article class="machine-card">
+        <div class="machine-head">
+          <div><h2>${esc(machine.name)}</h2><div class="sub">${esc(machine.controller)}</div></div>
+          ${statusBadge(machine)}
+        </div>
+        <div class="machine-body">
+          <div class="active-job">
+            <div class="active-row">
+              <div><div class="work-order">${esc(machine.active.wo)}</div><div class="part">${esc(machine.active.part)}</div></div>
+              <div style="text-align:right"><strong>ETA ${etaForMachine(machine)}</strong><div class="queue-meta">${machine.active.cycleMin} min median cycle</div></div>
+            </div>
+            <div class="progress-track"><div class="progress-bar" style="width:${pct}%"></div></div>
+            <div class="progress-label"><span>${machine.active.completed} of ${machine.active.quantity} complete</span><span>${pct}%</span></div>
+          </div>
+          ${downtimeControls}
+          <div class="queue-title"><h3>Approved executable queue</h3><span class="queue-meta">Machinist-controlled</span></div>
+          <div class="queue">
+            ${machine.queue.length ? machine.queue.map((job, index) => `<div class="queue-item">
+              <div class="position">${index + 1}</div>
+              <div class="queue-item-main"><div class="work-order">${esc(job.wo)} · ${esc(job.part)}</div><div class="queue-meta"><span class="${readinessClass(job.readiness)}">${esc(job.readiness)}</span> · ${job.quantity} pcs · ${job.cycleMin} min cycle</div></div>
+            </div>`).join('') : '<div class="empty">No queued work.</div>'}
+          </div>
+        </div>
+      </article>`;
+    }).join('');
+
+    document.querySelectorAll('.reason-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const machineId = btn.closest('.reason-grid').dataset.machine;
+        const machine = state.machines.find(m => m.id === machineId);
+        machine.stopReason = btn.dataset.reason;
+        addAudit(`${machine.name} downtime classified as “${btn.dataset.reason}” by machinist.`);
+        render();
+      });
+    });
+  }
+
+  function renderRequests() {
+    const pending = state.requests.filter(r => r.status === 'PENDING');
+    $('pendingCount').textContent = `${pending.length} pending`;
+    if (!pending.length) {
+      pendingRequests.innerHTML = '<div class="empty">No pending requests.</div>';
+      return;
+    }
+    pendingRequests.innerHTML = pending.map(req => {
+      const machine = state.machines.find(m => m.id === req.machineId);
+      const controls = state.role === 'machinist'
+        ? `<div class="request-actions">
+            <button class="btn btn-success btn-small request-action" data-id="${req.id}" data-action="approve">Approve</button>
+            <button class="btn btn-small request-action" data-id="${req.id}" data-action="after-current">Approve after current job</button>
+            <button class="btn btn-small request-action" data-id="${req.id}" data-action="alternate">Propose position 2</button>
+            <button class="btn btn-danger btn-small request-action" data-id="${req.id}" data-action="reject">Reject</button>
+          </div>`
+        : '<div class="queue-meta">Awaiting machinist approval. The executable queue is unchanged.</div>';
+      return `<div class="request-card">
+        <div class="request-card-top"><div><strong>${esc(machine.name)} — Move ${esc(req.wo)} to position ${req.targetPosition}</strong><div class="queue-meta">${esc(req.reason)} · requested by ${esc(req.requester)}</div></div><span class="badge" style="background:var(--yellow-soft);color:var(--yellow)">Pending</span></div>
+        ${controls}
+      </div>`;
+    }).join('');
+
+    document.querySelectorAll('.request-action').forEach(btn => {
+      btn.addEventListener('click', () => processRequest(Number(btn.dataset.id), btn.dataset.action));
+    });
+  }
+
+  function processRequest(requestId, action) {
+    const req = state.requests.find(r => r.id === requestId);
+    const machine = state.machines.find(m => m.id === req.machineId);
+    if (action === 'reject') {
+      req.status = 'REJECTED';
+      addAudit(`${machine.name}: ${req.wo} queue request rejected by machinist — current setup/sequence retained.`);
+    } else {
+      const currentIndex = machine.queue.findIndex(j => j.wo === req.wo);
+      if (currentIndex === -1) return;
+      const [job] = machine.queue.splice(currentIndex, 1);
+      let targetIndex = Math.max(0, req.targetPosition - 1);
+      if (action === 'alternate') targetIndex = 1;
+      machine.queue.splice(Math.min(targetIndex, machine.queue.length), 0, job);
+      req.status = 'APPROVED';
+      const timing = action === 'after-current' ? ' after the current job' : '';
+      addAudit(`${machine.name}: ${req.wo} queue switch approved${timing} by machinist. New position: ${machine.queue.findIndex(j => j.wo === req.wo) + 1}.`);
+    }
+    render();
+  }
+
+  function renderAudit() {
+    $('auditList').innerHTML = state.audit.map(item => `<div class="audit-item"><div>${esc(item.text)}</div><div class="audit-time">${fmtTime(item.time)}</div></div>`).join('');
+  }
+
+  function populateRequestForm() {
+    $('requestMachine').innerHTML = state.machines.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+    updateJobOptions();
+  }
+
+  function updateJobOptions() {
+    const machine = state.machines.find(m => m.id === $('requestMachine').value) || state.machines[0];
+    $('requestJob').innerHTML = machine.queue.map(j => `<option value="${j.wo}">${esc(j.wo)} — ${esc(j.part)}</option>`).join('');
+  }
+
+  function renderRole() {
+    requestPanel.classList.toggle('hidden', state.role !== 'pm');
+    const info = {
+      machinist: ['Machinist view', 'Run jobs normally, approve queue requests, and classify exceptions.'],
+      pm: ['PM / Engineer view', 'See machine status and request changes without directly altering the executable queue.'],
+      leadership: ['Leadership view', 'See current status, blockers, queue risk, and request history.']
+    }[state.role];
+    $('roleTitle').textContent = info[0];
+    $('roleHelp').textContent = info[1];
+  }
+
+  function advanceSimulation() {
+    const machine = state.machines.find(m => m.state === 'PRODUCTION');
+    if (!machine) {
+      addAudit('Simulation advance skipped because no machine is producing.');
+      render();
+      return;
+    }
+    machine.active.completed = Math.min(machine.active.quantity, machine.active.completed + 1);
+    addAudit(`${machine.name} completed one simulated cycle on ${machine.active.wo}.`);
+    if (machine.active.completed >= machine.active.quantity && machine.queue.length) {
+      const next = machine.queue.shift();
+      addAudit(`${machine.name} completed ${machine.active.wo}; ${next.wo} is ready for machinist association.`);
+      machine.active = { ...next, completed: 0 };
+      machine.state = 'SETUP';
+    }
+    render();
+  }
+
+  function render() {
+    renderRole();
+    renderMetrics();
+    renderMachines();
+    renderRequests();
+    renderAudit();
+    populateRequestForm();
+  }
+
+  role.addEventListener('change', () => { state.role = role.value; render(); });
+  $('requestMachine').addEventListener('change', updateJobOptions);
+  $('submitRequest').addEventListener('click', () => {
+    const machineId = $('requestMachine').value;
+    const wo = $('requestJob').value;
+    const targetPosition = Number($('requestPosition').value);
+    const reason = $('requestReason').value;
+    if (!wo) return;
+    state.requests.push({
+      id: Math.max(0, ...state.requests.map(r => r.id)) + 1,
+      machineId, wo, targetPosition, reason,
+      requester: 'PM / Engineer — Demo User', status: 'PENDING', created: new Date().toISOString()
+    });
+    const machine = state.machines.find(m => m.id === machineId);
+    addAudit(`${machine.name}: queue switch requested for ${wo} to position ${targetPosition}. Awaiting machinist approval.`);
+    render();
+  });
+  $('advanceBtn').addEventListener('click', advanceSimulation);
+  $('stopBtn').addEventListener('click', () => {
+    const machine = state.machines[0];
+    machine.state = 'STOPPED';
+    machine.stopReason = null;
+    addAudit(`${machine.name} entered a simulated stopped state; downtime reason is awaiting machinist input.`);
+    render();
+  });
+  $('resetBtn').addEventListener('click', () => {
+    state = JSON.parse(JSON.stringify(initialState));
+    role.value = 'machinist';
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
