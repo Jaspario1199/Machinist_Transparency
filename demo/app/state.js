@@ -111,6 +111,41 @@
     return state.actors[state.role];
   }
 
+  /** Builds an active-job record from a queue entry, preserving partial progress. */
+  function activeFromJob(job) {
+    return {
+      wo: job.wo,
+      part: job.part,
+      done: job.done ?? 0,
+      qty: job.qty,
+      cycleMedianMin: job.cycleMedianMin,
+      cycleSigmaMin: job.cycleSigmaMin,
+      setupMin: job.setupMin,
+      program: job.program,
+      path: `FS1 / ${job.part}`,
+      requestedPriority: job.requestedPriority,
+      dueAt: job.dueAt,
+    };
+  }
+
+  /** Puts the active job back into the queue, keeping the quantity already run. */
+  function jobFromActive(machine) {
+    return {
+      wo: machine.active.wo,
+      part: machine.active.part,
+      qty: machine.active.qty,
+      done: machine.active.done,
+      cycleMedianMin: machine.active.cycleMedianMin,
+      cycleSigmaMin: machine.active.cycleSigmaMin,
+      setupMin: machine.active.setupMin,
+      program: machine.active.program,
+      ready: machine.active.done > 0 ? `Part-finished — ${machine.active.done} of ${machine.active.qty} done` : 'Ready to run',
+      readyCode: 'READY',
+      requestedPriority: machine.active.requestedPriority,
+      dueAt: machine.active.dueAt,
+    };
+  }
+
   function machineById(state, id) {
     return state.machines.find((m) => m.id === id) ?? null;
   }
@@ -431,6 +466,7 @@
       // per the acceptance rule that prompts must not chase tool changes.
       machine.downtime = null;
       machine.promptedAt = null;
+      machine.promptSnoozedUntil = null;
     }
 
     machine.state = next;
@@ -475,19 +511,7 @@
 
     applyDeferredRequests(state, machine);
     const job = machine.queue.shift();
-    machine.active = {
-      wo: job.wo,
-      part: job.part,
-      done: 0,
-      qty: job.qty,
-      cycleMedianMin: job.cycleMedianMin,
-      cycleSigmaMin: job.cycleSigmaMin,
-      setupMin: job.setupMin,
-      program: job.program,
-      path: `FS1 / ${job.part}`,
-      requestedPriority: job.requestedPriority,
-      dueAt: job.dueAt,
-    };
+    machine.active = activeFromJob(job);
     machine.setupRemainingMin = job.setupMin;
     machine.cycleElapsedMin = 0;
     machine.cycleTargetMin = null;
@@ -519,6 +543,112 @@
     const next = machine.setupRemainingMin > 0 ? 'SETUP' : 'PRODUCTION';
     setState(state, machine, next, { actor: actor.name, role: actor.role, detail: 'resumed by operator' });
     return { ok: true };
+  }
+
+
+  // -------------------------------------------- direct machinist control ---
+
+  /**
+   * The machinist owns the approved executable queue (docs/05, step 4) and
+   * reorders it directly — no request, no approval, nobody else's permission.
+   * The change is still audited, because "attributable" and "needs approval"
+   * are different things.
+   */
+  function reorderQueue(state, machineId, wo, direction) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const from = machine.queue.findIndex((q) => q.wo === wo);
+    if (from < 0) return { ok: false, reason: `${wo} is not in this queue` };
+
+    const target = direction === 'top' ? 1 : direction === 'up' ? from : from + 2;
+    const before = queueWos(machine);
+    const result = moveInQueue(machine, wo, target);
+    if (!result.ok) return { ok: false, reason: result.reason };
+
+    record(state, {
+      machineId,
+      event: 'QUEUE_REORDERED',
+      wo,
+      summary: `Machinist moved ${wo} from position ${result.from} to ${result.to}`,
+      before,
+      after: queueWos(machine),
+    });
+    return { ok: true, message: `${wo} moved to position ${result.to}` };
+  }
+
+  /**
+   * Switch the machine onto a different job now. The current job goes back to
+   * the front of the queue with its completed quantity intact, so nothing is
+   * lost — but its setup is abandoned, which is exactly the cost docs/05 warns
+   * about, so it is recorded rather than glossed over.
+   */
+  function switchActiveJob(state, machineId, wo) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const index = machine.queue.findIndex((q) => q.wo === wo);
+    if (index < 0) return { ok: false, reason: `${wo} is not in this queue` };
+    if (machine.active.wo === wo) return { ok: false, reason: `${wo} is already running` };
+
+    const actor = currentActor(state);
+    const before = queueWos(machine);
+    const displaced = jobFromActive(machine);
+    const setupLost = machine.state === 'SETUP'
+      ? Math.max(0, machine.active.setupMin - machine.setupRemainingMin)
+      : machine.active.setupMin;
+
+    const [job] = machine.queue.splice(index, 1);
+    machine.queue.unshift(displaced);
+    machine.active = activeFromJob(job);
+    machine.setupRemainingMin = job.setupMin;
+    machine.cycleElapsedMin = 0;
+    machine.cycleTargetMin = null;
+    setState(state, machine, 'SETUP', { actor: actor.name, role: actor.role, detail: `switched to ${job.wo}` });
+
+    record(state, {
+      machineId,
+      event: 'ACTIVE_JOB_SWITCHED',
+      wo: job.wo,
+      summary: `Switched to ${job.wo}. ${displaced.wo} returns to position 1 with ${displaced.done} of ${displaced.qty} complete; about ${Math.round(setupLost)} min of setup abandoned.`,
+      before,
+      after: queueWos(machine),
+    });
+    return { ok: true, message: `Now running ${job.wo} — ${displaced.wo} held at position 1` };
+  }
+
+  /**
+   * Defer the downtime prompt without answering it. Deliberately possible: a
+   * prompt that cannot be dismissed on a shop terminal is how the whole system
+   * gets switched off. Deliberately recorded and re-raised: the stoppage still
+   * counts as unclassified everywhere until someone answers.
+   */
+  function snoozeDowntimePrompt(state, machineId, seconds) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    machine.promptSnoozedUntil = Date.now() + seconds * 1000;
+    record(state, {
+      machineId,
+      event: 'DOWNTIME_PROMPT_DEFERRED',
+      wo: machine.active.wo,
+      summary: `Reason prompt deferred for ${seconds}s — stoppage remains unclassified`,
+    });
+    return { ok: true, message: `Asking again in ${seconds}s` };
+  }
+
+  /** Does this machine currently owe someone a downtime reason? */
+  function needsDowntimeReason(state, machine) {
+    return A.BLOCKED_STATES.includes(machine.state)
+      && !machine.downtime
+      && (now() - machine.stateSince) / 1000 >= state.config.downtimePromptSeconds;
+  }
+
+  /** Is the prompt due to be shown right now (not snoozed)? */
+  function downtimePromptDue(state, machine) {
+    if (!needsDowntimeReason(state, machine)) return false;
+    return !machine.promptSnoozedUntil || machine.promptSnoozedUntil <= now();
+  }
+
+  function now() {
+    return Date.now();
   }
 
   // --------------------------------------------------------- telemetry sim ---
@@ -574,19 +704,7 @@
             applyDeferredRequests(state, machine);
             if (machine.queue.length) {
               const job = machine.queue.shift();
-              machine.active = {
-                wo: job.wo,
-                part: job.part,
-                done: 0,
-                qty: job.qty,
-                cycleMedianMin: job.cycleMedianMin,
-                cycleSigmaMin: job.cycleSigmaMin,
-                setupMin: job.setupMin,
-                program: job.program,
-                path: `FS1 / ${job.part}`,
-                requestedPriority: job.requestedPriority,
-                dueAt: job.dueAt,
-              };
+              machine.active = activeFromJob(job);
               machine.setupRemainingMin = job.setupMin;
               setState(state, machine, 'SETUP', { detail: `next job ${job.wo}` });
               record(state, {
@@ -709,6 +827,11 @@
     updateBlocker,
     completeSetup,
     startNextJob,
+    reorderQueue,
+    switchActiveJob,
+    snoozeDowntimePrompt,
+    needsDowntimeReason,
+    downtimePromptDue,
     stopMachine,
     resumeMachine,
     setState,

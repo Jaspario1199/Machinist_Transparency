@@ -169,6 +169,24 @@
   </div>
 </dialog>
 
+<!-- Downtime reason — raised automatically once a stoppage passes the threshold -->
+<dialog id="downtimeDialog" aria-labelledby="downtimeTitle">
+  <div class="dialog-head">
+    <div>
+      <h3 id="downtimeTitle">Why is this machine stopped?</h3>
+      <p class="muted" id="downtimeSubtitle"></p>
+    </div>
+  </div>
+  <div class="dialog-body">
+    <p class="notice urgent" id="downtimeAlarm" hidden></p>
+    <div id="downtimeReasons"></div>
+    <div class="dialog-actions dialog-actions-split">
+      <button class="btn" type="button" id="downtimeSnooze">Not now — ask again in 60s</button>
+      <span class="muted small">The stoppage stays flagged as unclassified until you answer.</span>
+    </div>
+  </div>
+</dialog>
+
 <!-- Generic confirm / short-form dialog -->
 <dialog id="promptDialog" aria-labelledby="promptTitle">
   <form id="promptForm">

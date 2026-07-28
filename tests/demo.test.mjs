@@ -53,6 +53,14 @@ const openSections = (page) => page.evaluate(() => {
 
 const getState = (page) => page.evaluate(() => window.MT_DEBUG.getState());
 
+/** Closes the auto-raised downtime popup so the panel underneath is reachable. */
+async function dismissDowntimePopup(page) {
+  if (await page.evaluate(() => document.getElementById('downtimeDialog').open)) {
+    await page.click('#downtimeSnooze');
+    await page.waitForFunction(() => !document.getElementById('downtimeDialog').open);
+  }
+}
+
 // ------------------------------------------------------------ ETA policy ---
 
 test('active-job ETA is a range with confidence and a leading risk, never a bare number', async () => {
@@ -279,18 +287,25 @@ test('a machine with no queued work explains itself instead of offering a dead b
 test('the reason list comes from config and shows the responsible group', async () => {
   const page = await open();
   await page.click('.machine[data-machine="cnc-3"]');
-  await openSections(page);
   const configured = await page.evaluate(() => window.DOWNTIME_REASONS.map((r) => r.code));
-  const rendered = await page.$$eval('.reason', (els) => els.map((e) => e.dataset.reason));
-  assert.deepEqual(rendered, configured, 'the demo must render exactly the configured reason tree');
-  assert.match(await page.textContent('.reason'), /Manufacturing Engineering|Materials|Quality|Maintenance|Planning|Production Supervisor/);
+
+  // The popup and the panel must both offer exactly the configured tree.
+  const inPopup = await page.$$eval('#downtimeReasons .reason', (els) => els.map((e) => e.dataset.reason));
+  assert.deepEqual(inPopup, configured, 'the popup must render exactly the configured reason tree');
+
+  await dismissDowntimePopup(page);
+  await openSections(page);
+  const inPanel = await page.$$eval('#panel .reason', (els) => els.map((e) => e.dataset.reason));
+  assert.deepEqual(inPanel, configured, 'the panel must render exactly the configured reason tree');
+  assert.match(await page.textContent('#panel .reason'), /Manufacturing Engineering|Materials|Quality|Maintenance|Planning|Production Supervisor/);
 });
 
 test('reasons flagged note_required actually demand a note', async () => {
   const page = await open();
   await page.click('.machine[data-machine="cnc-3"]');
+  await dismissDowntimePopup(page);
   await openSections(page);
-  await page.click('.reason[data-reason="MATERIAL"]'); // note_required = true
+  await page.click('#panel .reason[data-reason="MATERIAL"]'); // note_required = true
   await page.waitForSelector('#promptDialog[open]');
   assert.match(await page.textContent('#promptDescription'), /Materials/);
   await page.fill('#promptFields textarea', 'Bar stock still in receiving');
@@ -305,8 +320,9 @@ test('reasons flagged note_required actually demand a note', async () => {
 test('classifying downtime opens a blocker owned by the configured group', async () => {
   const page = await open();
   await page.click('.machine[data-machine="cnc-3"]');
+  await dismissDowntimePopup(page);
   await openSections(page);
-  await page.click('.reason[data-reason="MACHINE_FAULT"]');
+  await page.click('#panel .reason[data-reason="MACHINE_FAULT"]');
   await page.waitForSelector('#promptDialog[open]');
   await page.fill('#promptFields textarea', 'Spindle alarm');
   await page.click('#promptConfirm');
@@ -322,8 +338,9 @@ test('classifying downtime opens a blocker owned by the configured group', async
 test('a classified stoppage survives the machine resuming', async () => {
   const page = await open();
   await page.click('.machine[data-machine="cnc-3"]');
+  await dismissDowntimePopup(page);
   await openSections(page);
-  await page.click('.reason[data-reason="TOOLING"]');
+  await page.click('#panel .reason[data-reason="TOOLING"]');
   await page.waitForSelector('#promptDialog[open]');
   await page.fill('#promptFields textarea', 'Insert change');
   await page.click('#promptConfirm');
@@ -349,9 +366,15 @@ test('short stops below the threshold are not chased for a reason', async () => 
     window.MT_DEBUG.setState(s);
   });
   await openSections(page);
+  await page.evaluate(() => window.MT_DEBUG.raisePrompt());
   const body = await page.textContent('#panel');
   assert.match(body, /No reason is requested until 600s/);
-  assert.equal((await page.$$('.reason')).length, 0, 'no prompt should appear below the threshold');
+  assert.equal((await page.$$('#panel .reason')).length, 0, 'no prompt should appear below the threshold');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('downtimeDialog').open),
+    false,
+    'a short stop must not raise the popup',
+  );
 });
 
 test('blockers can be acknowledged and closed, and both are audited', async () => {
@@ -656,8 +679,9 @@ test('shop-floor controls meet a 44px touch target, decisions included', async (
   }
 
   await page.click('.machine[data-machine="cnc-3"]');
+  await dismissDowntimePopup(page);
   await openSections(page);
-  for (const item of await measure('.reason')) {
+  for (const item of await measure('#panel .reason')) {
     assert.ok(item.h >= 60, `downtime reason "${item.text}" is only ${item.h}px tall`);
   }
 });
@@ -751,4 +775,185 @@ test('the standalone bundle behaves identically to the multi-file demo', async (
   await page.click('[data-role="leadership"]');
   assert.ok((await page.$$('#shopAuditBody tbody tr')).length > 3);
   await context.close();
+});
+
+// -------------------------------------- direct machinist control of the queue ---
+
+test('the machinist reorders their own queue directly, with no request or approval', async () => {
+  const page = await open();
+  await openSections(page);
+  const before = (await getState(page)).machines[0].queue.map((q) => q.wo);
+  const pendingBefore = (await getState(page)).requests.filter((r) => r.status === 'PENDING').length;
+
+  await page.click('[data-queue-move="up"][data-wo="WO-20492"]');
+
+  const state = await getState(page);
+  const after = state.machines[0].queue.map((q) => q.wo);
+  assert.equal(after[0], 'WO-20492', 'the machinist must be able to promote a job themselves');
+  assert.notDeepEqual(after, before);
+  assert.equal(
+    state.requests.filter((r) => r.status === 'PENDING').length,
+    pendingBefore,
+    'reordering your own queue must not create or consume a request',
+  );
+
+  const entry = state.audit.find((a) => a.event === 'QUEUE_REORDERED');
+  assert.ok(entry, 'a direct reorder is still audited — attributable is not the same as needing approval');
+  assert.deepEqual(entry.before, before);
+  assert.deepEqual(entry.after, after);
+  assert.equal(entry.role, 'Machinist');
+});
+
+test('queue reorder controls are disabled at the ends and never silently no-op', async () => {
+  const page = await open();
+  await openSections(page);
+  const first = await page.$$eval('.q', (rows) => ({
+    firstUp: rows[0].querySelector('[data-queue-move="up"]').disabled,
+    lastDown: rows[rows.length - 1].querySelector('[data-queue-move="down"]').disabled,
+    middleUp: rows[1].querySelector('[data-queue-move="up"]').disabled,
+  }));
+  assert.equal(first.firstUp, true, 'the top job cannot move up');
+  assert.equal(first.lastDown, true, 'the bottom job cannot move down');
+  assert.equal(first.middleUp, false);
+});
+
+test('only the machinist gets queue controls', async () => {
+  const page = await open();
+  assert.ok((await page.$$('[data-queue-move]')).length > 0, 'the machinist must have them');
+  for (const role of ['engineer', 'leadership']) {
+    await page.click(`[data-role="${role}"]`);
+    await openSections(page);
+    assert.equal((await page.$$('[data-queue-move], [data-queue-run]')).length, 0, `${role} must not reorder the queue`);
+  }
+});
+
+test('the machinist can switch the running job, keeping progress and recording the setup loss', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('[data-queue-run="WO-20517"]');
+  await page.waitForSelector('#promptDialog[open]');
+
+  const warning = await page.textContent('#promptDescription');
+  assert.match(warning, /34 finished pieces/, 'the warning must say what happens to the part-finished job');
+  assert.match(warning, /setup on it is abandoned/, 'the warning must state the setup cost');
+  await page.click('#promptConfirm');
+
+  const machine = (await getState(page)).machines[0];
+  assert.equal(machine.active.wo, 'WO-20517', 'the chosen job must now be running');
+  assert.equal(machine.state, 'SETUP', 'a switched-to job needs its own setup');
+
+  const displaced = machine.queue.find((q) => q.wo === 'WO-20481');
+  assert.ok(displaced, 'the displaced job must go back into the queue, not vanish');
+  assert.equal(machine.queue[0].wo, 'WO-20481', 'it holds position 1');
+  assert.equal(displaced.done, 34, 'its completed quantity must be preserved');
+
+  const entry = (await getState(page)).audit.find((a) => a.event === 'ACTIVE_JOB_SWITCHED');
+  assert.ok(entry, 'switching the running job must be audited');
+  assert.match(entry.summary, /34 of 50 complete/);
+  assert.match(entry.summary, /setup abandoned/);
+});
+
+// ---------------------------------------------------- the downtime popup ---
+
+test('a stoppage past the threshold raises a popup, not a panel to be noticed', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('downtimeDialog').open),
+    true,
+    'the reason prompt must raise itself',
+  );
+  assert.match(await page.textContent('#downtimeSubtitle'), /CNC Lathe 1 .* stopped \d+ min/);
+  assert.equal((await page.$$('#downtimeReasons .reason')).length, 11);
+  assert.equal(await page.getAttribute('#downtimeDialog', 'aria-labelledby'), 'downtimeTitle');
+});
+
+test('the popup is answerable in one tap and routes the blocker', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await page.click('#downtimeReasons .reason[data-reason="NO_WORK"]'); // no note required
+
+  await page.waitForFunction(() => !document.getElementById('downtimeDialog').open);
+  const state = await getState(page);
+  assert.equal(state.machines.find((m) => m.id === 'cnc-3').downtime.code, 'NO_WORK');
+  assert.ok(state.audit.some((a) => a.event === 'DOWNTIME_CLASSIFIED'));
+});
+
+test('the popup can be deferred — but deferring is recorded and stays visible', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await page.click('#downtimeSnooze');
+  await page.waitForFunction(() => !document.getElementById('downtimeDialog').open);
+
+  const state = await getState(page);
+  assert.ok(state.audit.some((a) => a.event === 'DOWNTIME_PROMPT_DEFERRED'), 'deferring must be audited');
+  assert.equal(state.machines.find((m) => m.id === 'cnc-3').downtime, null, 'deferring must not classify anything');
+
+  assert.match(await page.textContent('.machine[data-machine="cnc-3"]'), /Reason needed/, 'the machine stays flagged');
+  assert.match(await page.textContent('#panel .banner'), /Reason needed/, 'the workspace stays flagged');
+
+  await page.click('[data-role="leadership"]');
+  const metrics = await page.$$eval('.metric', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
+  assert.ok(
+    metrics.includes('Unclassifiedstoppages1'),
+    `leadership must still count it as unclassified, got ${JSON.stringify(metrics)}`,
+  );
+});
+
+test('a deferred prompt comes back when the snooze expires', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await page.click('#downtimeSnooze');
+  await page.waitForFunction(() => !document.getElementById('downtimeDialog').open);
+
+  await page.evaluate(() => window.MT_DEBUG.raisePrompt());
+  assert.equal(
+    await page.evaluate(() => document.getElementById('downtimeDialog').open),
+    false,
+    'it must stay closed while snoozed',
+  );
+
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.machines.find((m) => m.id === 'cnc-3').promptSnoozedUntil = Date.now() - 1;
+    window.MT_DEBUG.setState(s);
+    window.MT_DEBUG.raisePrompt();
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('downtimeDialog').open),
+    true,
+    'the prompt must return once the snooze expires',
+  );
+});
+
+test('the popup never traps a role that cannot answer it', async () => {
+  const page = await open();
+  for (const role of ['engineer', 'leadership']) {
+    await page.click(`[data-role="${role}"]`);
+    await page.click('.machine[data-machine="cnc-3"]');
+    await page.evaluate(() => window.MT_DEBUG.raisePrompt());
+    assert.equal(
+      await page.evaluate(() => document.getElementById('downtimeDialog').open),
+      false,
+      `${role} cannot classify a stoppage, so must not be interrupted by the prompt`,
+    );
+  }
+});
+
+test('the popup does not fight another dialog the user is already in', async () => {
+  const page = await open();
+  await page.click('[data-role="engineer"]');
+  await page.click('[data-act="request"]');
+  await page.waitForSelector('#requestDialog[open]');
+
+  await page.evaluate(() => {
+    window.MT_DEBUG.getState().role = 'machinist';
+    window.MT_DEBUG.getState().selected = 'cnc-3';
+    window.MT_DEBUG.raisePrompt();
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('downtimeDialog').open),
+    false,
+    'a second modal must not open on top of one already in use',
+  );
 });

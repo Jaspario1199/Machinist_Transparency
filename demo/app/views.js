@@ -90,7 +90,7 @@
       const selected = m.id === state.selected;
       const pendingCount = state.requests.filter((r) => r.machineId === m.id && r.status === 'PENDING').length;
       const deferredCount = state.requests.filter((r) => r.machineId === m.id && r.status === 'APPROVED_AFTER_CURRENT').length;
-      const needsReason = A.BLOCKED_STATES.includes(m.state) && !m.downtime && m.promptedAt;
+      const needsReason = S.needsDowntimeReason(state, m);
 
       const flags = [];
       if (needsReason) flags.push('<span class="flag urgent">Reason needed</span>');
@@ -139,22 +139,53 @@
     </div>`;
   }
 
-  function queueList(state, machine, now) {
+  /**
+   * The approved executable queue.
+   *
+   * `controls` is on for the machinist only. They own this queue (docs/05,
+   * step 4) and reorder it directly — everyone else has to ask.
+   */
+  function queueList(state, machine, now, controls = false) {
     if (!machine.queue.length) return '<p class="empty">No queued work. The machine will go idle when the current job finishes.</p>';
     const projection = A.queueProjection(state, machine);
+    const last = machine.queue.length - 1;
+
     return `<ol class="queue">${machine.queue.map((job, i) => {
       const proj = projection[i];
       const readyKind = job.readyCode === 'READY' ? 'ok' : 'warn';
+      const partial = job.done ? `<span class="readiness warn">${esc(job.done)} of ${esc(job.qty)} already run</span>` : '';
+
+      const rowControls = controls ? `<span class="qcontrols">
+        <button class="qbtn" data-queue-move="up" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-up"
+          ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} up">▲</button>
+        <button class="qbtn" data-queue-move="down" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-down"
+          ${i === last ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} down">▼</button>
+        <button class="btn small qnow" data-queue-run="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-run">Run this now</button>
+      </span>` : '';
+
       return `<li class="q">
         <span class="pos" aria-hidden="true">${i + 1}</span>
         <span class="qmain">
           <span class="wo">${esc(job.wo)} · ${esc(job.part)}</span>
           <span class="muted">${esc(job.qty)} pcs · ${esc(PRIORITY_LABELS[job.requestedPriority] ?? '—')}</span>
           <span class="readiness ${esc(readyKind)}">${esc(job.ready)}</span>
+          ${partial}
         </span>
         <span class="qeta muted">${proj.blocked ? 'Blocked' : `finishes ${esc(A.formatClockRange({ blocked: false, lowMin: proj.lowMin, highMin: proj.highMin }, now))}`}</span>
+        ${rowControls}
       </li>`;
-    }).join('')}</ol>`;
+    }).join('')}</ol>
+    ${controls ? '<p class="muted small">You control this queue directly. Engineering and leadership can only request a change.</p>' : ''}`;
+  }
+
+  /** The large one-tap reason buttons, shared by the panel and the popup. */
+  function reasonGrid() {
+    return `<div class="reasons">${window.DOWNTIME_REASONS.map((r) => `
+      <button class="btn reason" data-reason="${esc(r.code)}" data-focus-key="reason-${esc(r.code)}"
+        title="${esc(r.definition)}">
+        <span class="reason-label">${esc(r.label)}</span>
+        <span class="reason-owner">${esc(r.owner)}${r.noteRequired ? ' · note required' : ''}</span>
+      </button>`).join('')}</div>`;
   }
 
   function requestCard(state, request, showControls) {
@@ -221,15 +252,12 @@
       return `<p class="notice">Stopped ${stoppedSec}s ago. No reason is requested until ${threshold}s — short pauses and tool changes are not chased.</p>`;
     }
 
+    const snoozed = machine.promptSnoozedUntil && machine.promptSnoozedUntil > now;
     return `<div class="downtime-prompt">
-      <p class="notice urgent">Stopped ${Math.round(stoppedSec / 60)} min. Select a reason — one tap.
-        ${machine.alarm ? `Controller reports <strong>${esc(machine.alarm)}</strong>.` : ''}</p>
-      <div class="reasons">${window.DOWNTIME_REASONS.map((r) => `
-        <button class="btn reason" data-reason="${esc(r.code)}" data-focus-key="reason-${esc(r.code)}"
-          title="${esc(r.definition)}">
-          <span class="reason-label">${esc(r.label)}</span>
-          <span class="reason-owner">${esc(r.owner)}${r.noteRequired ? ' · note required' : ''}</span>
-        </button>`).join('')}</div>
+      <p class="notice urgent">Stopped ${Math.round(stoppedSec / 60)} min and still unclassified. Select a reason — one tap.
+        ${machine.alarm ? `Controller reports <strong>${esc(machine.alarm)}</strong>.` : ''}
+        ${snoozed ? `<br>Prompt deferred — asking again in ${Math.ceil((machine.promptSnoozedUntil - now) / 1000)}s.` : ''}</p>
+      ${reasonGrid()}
     </div>`;
   }
 
@@ -344,11 +372,19 @@
     </div>`;
   }
 
+  /** Flags other machines owing a reason, so nothing hides behind the selection. */
+  function otherMachinesNeedingReason(state, selectedId) {
+    const others = state.machines.filter((m) => m.id !== selectedId && S.needsDowntimeReason(state, m));
+    if (!others.length) return '';
+    return `<p class="banner warn">Also waiting on a reason: ${others.map((m) =>
+      `<button class="btn small" data-select-machine="${esc(m.id)}" data-focus-key="jump-${esc(m.id)}">${esc(m.name)}</button>`).join(' ')}</p>`;
+  }
+
   function machinistPanel(state, machine, now) {
     const pending = state.requests.filter((r) => r.machineId === machine.id && r.status === 'PENDING').length;
     const deferred = state.requests.filter((r) => r.machineId === machine.id && r.status === 'APPROVED_AFTER_CURRENT').length;
     const eta = A.etaForActiveJob(state, machine);
-    const needsReason = A.BLOCKED_STATES.includes(machine.state) && !machine.downtime && machine.promptedAt;
+    const needsReason = S.needsDowntimeReason(state, machine);
     const openBlockers = A.openBlockers(state, machine.id).length;
 
     const controls = [];
@@ -358,7 +394,11 @@
     else controls.push('<button class="btn bad" data-act="stop" data-focus-key="stop">Stop machine</button>');
 
     return `${panelHead(state, machine, 'Machinist controls for this machine only', now, `<div class="head-actions">${controls.join('')}</div>`)}
-      ${needsReason ? '<p class="banner urgent">This machine has been stopped past the prompt threshold and still has no reason. One tap clears it.</p>' : ''}
+      ${needsReason ? `<p class="banner urgent"><strong>Reason needed.</strong> ${esc(machine.name)} has been stopped
+        ${Math.round((now - machine.stateSince) / 60000)} min with no cause recorded. It stays flagged here, on the machine
+        button and on the leadership board until someone answers.
+        <button class="btn small" data-act="open-downtime" data-focus-key="open-downtime">Give a reason</button></p>` : ''}
+      ${otherMachinesNeedingReason(state, machine.id)}
       <div class="stats four">
         <div class="stat"><div class="label">Active job</div><div class="value">${esc(machine.active.wo)}</div></div>
         <div class="stat"><div class="label">Progress</div><div class="value">${pct(machine)}%<span class="unit"> · ${esc(machine.active.qty - machine.active.done)} left</span></div></div>
@@ -367,7 +407,7 @@
       </div>
       <div class="content">
         ${section(state, `m-job-${machine.id}`, 'Current job', `${pct(machine)}% complete`, jobCard(state, machine, now, true), true)}
-        ${section(state, `m-queue-${machine.id}`, 'Approved executable queue', `${machine.queue.length} queued${deferred ? ` · ${deferred} deferred change pending` : ''}`, queueList(state, machine, now), true)}
+        ${section(state, `m-queue-${machine.id}`, 'Approved executable queue', `${machine.queue.length} queued${deferred ? ` · ${deferred} deferred change pending` : ''}`, queueList(state, machine, now, true), true)}
         ${section(state, `m-req-${machine.id}`, 'Queue-change requests', `${pending} to approve`, requestList(state, machine, true), pending > 0 || deferred > 0)}
         ${section(state, `m-down-${machine.id}`, 'Downtime and exceptions', machine.downtime ? machine.downtime.label : machine.state, downtimePanel(state, machine, now), A.BLOCKED_STATES.includes(machine.state))}
         ${section(state, `m-blk-${machine.id}`, 'Open blockers', `${openBlockers} open`, blockerList(state, machine.id), openBlockers > 0)}
@@ -423,7 +463,7 @@
     const stopped = state.machines.filter((m) => A.BLOCKED_STATES.includes(m.state)).length;
     const pending = state.requests.filter((r) => r.status === 'PENDING').length;
     const deferred = state.requests.filter((r) => r.status === 'APPROVED_AFTER_CURRENT').length;
-    const unclassified = state.machines.filter((m) => A.BLOCKED_STATES.includes(m.state) && !m.downtime).length;
+    const unclassified = state.machines.filter((m) => S.needsDowntimeReason(state, m)).length;
     const blockers = state.blockers.filter((b) => b.status !== 'CLOSED').length;
     const atRisk = state.machines.filter((m) => A.dueDateRisk(state, m, now).level === 'HIGH').length;
 
@@ -449,6 +489,8 @@
     ago,
     pct,
     machineStrip,
+    reasonGrid,
+    queueList,
     machinistPanel,
     engineerPanel,
     leadershipPanel,

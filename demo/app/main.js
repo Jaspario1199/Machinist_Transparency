@@ -177,6 +177,43 @@
     });
   }
 
+
+  // ------------------------------------------------------ downtime popup ---
+
+  /**
+   * The stoppage prompt is a real popup, not a panel someone has to notice.
+   *
+   * It is dismissible on purpose: a prompt that cannot be cleared on a shop
+   * terminal is how the whole system gets switched off (risk R-01/R-04). It is
+   * also re-raised on purpose — deferring is recorded, the machine keeps its
+   * "Reason needed" flag, and leadership keeps counting the stoppage as
+   * unclassified until somebody answers.
+   */
+  function renderDowntimeDialog(machine) {
+    const stoppedMin = Math.round((Date.now() - machine.stateSince) / 60000);
+    $('downtimeSubtitle').textContent =
+      `${machine.name} · ${machine.active.wo} · stopped ${stoppedMin} min. One tap is enough.`;
+    const alarm = $('downtimeAlarm');
+    alarm.hidden = !machine.alarm;
+    if (machine.alarm) alarm.textContent = `Controller reports ${machine.alarm}.`;
+    $('downtimeReasons').innerHTML = V.reasonGrid();
+  }
+
+  function maybeRaiseDowntimeDialog() {
+    const dialog = $('downtimeDialog');
+    const machine = S.selectedMachine(state);
+
+    if (state.role !== 'machinist' || !S.downtimePromptDue(state, machine)) {
+      if (dialog.open) dialog.close();
+      return;
+    }
+    // Never fight another dialog the user is already in the middle of.
+    if ($('requestDialog').open || $('promptDialog').open) return;
+
+    renderDowntimeDialog(machine);
+    if (!dialog.open) dialog.showModal();
+  }
+
   // ------------------------------------------------------- request dialog ---
 
   let requestDraftMachine = null;
@@ -277,6 +314,28 @@
     commit(S.decideRequest(state, requestId, action));
   }
 
+
+  async function handleRunNow(wo) {
+    const machine = S.selectedMachine(state);
+    const job = machine.queue.find((q) => q.wo === wo);
+    if (!job) { toast(`${wo} is not in this queue`, 'bad'); return; }
+
+    const setupLost = machine.state === 'SETUP'
+      ? Math.max(0, machine.active.setupMin - machine.setupRemainingMin)
+      : machine.active.setupMin;
+
+    const answer = await ask({
+      title: `Run ${wo} now?`,
+      description: `${machine.active.wo} goes back to position 1 keeping its ${machine.active.done} finished pieces, `
+        + `but about ${Math.round(setupLost)} min of setup on it is abandoned. `
+        + `${job.wo} then needs its own ${job.setupMin} min setup.`,
+      fields: [{ label: 'This is your call — it needs nobody\u2019s approval. It is recorded in the audit trail.' }],
+      confirmLabel: `Switch to ${wo}`,
+    });
+    if (!answer) return;
+    commit(S.switchActiveJob(state, machine.id, wo));
+  }
+
   async function handleReason(code) {
     const reason = S.reasonByCode(code);
     let note = '';
@@ -295,6 +354,7 @@
       toast(result.reason, 'bad');
       return;
     }
+    if ($('downtimeDialog').open) $('downtimeDialog').close();
     commit(result, `Recorded as ${reason.label} — ${reason.owner} notified`);
   }
 
@@ -349,6 +409,7 @@
       S.tick(state, state.config.simSpeed);
       S.save(state);
       render();
+      maybeRaiseDowntimeDialog();
     }, 1000);
   }
 
@@ -395,6 +456,7 @@
       S.save(state);
       render();
       updateSimControls();
+      maybeRaiseDowntimeDialog();
     });
 
     $('panel').addEventListener('click', (event) => {
@@ -407,6 +469,15 @@
       const blocker = event.target.closest('[data-blocker]');
       if (blocker) { commit(S.updateBlocker(state, Number(blocker.dataset.blocker), blocker.dataset.status)); return; }
 
+      const move = event.target.closest('[data-queue-move]');
+      if (move) { commit(S.reorderQueue(state, state.selected, move.dataset.wo, move.dataset.queueMove)); return; }
+
+      const runNow = event.target.closest('[data-queue-run]');
+      if (runNow) { handleRunNow(runNow.dataset.queueRun); return; }
+
+      const jump = event.target.closest('[data-select-machine]');
+      if (jump) { state.selected = jump.dataset.selectMachine; S.save(state); render(); maybeRaiseDowntimeDialog(); return; }
+
       const act = event.target.closest('[data-act]');
       if (!act) return;
       const id = state.selected;
@@ -416,6 +487,13 @@
         case 'stop': commit(S.stopMachine(state, id)); break;
         case 'resume': commit(S.resumeMachine(state, id), 'Machine resumed'); break;
         case 'request': openRequestDialog(id); break;
+        case 'open-downtime': {
+          const machine = S.selectedMachine(state);
+          machine.promptSnoozedUntil = null;
+          renderDowntimeDialog(machine);
+          if (!$('downtimeDialog').open) $('downtimeDialog').showModal();
+          break;
+        }
         default: break;
       }
     });
@@ -430,6 +508,15 @@
     $('requestCancel').addEventListener('click', () => $('requestDialog').close());
     $('requestClose').addEventListener('click', () => $('requestDialog').close());
     $('promptCancel').addEventListener('click', () => $('promptDialog').close());
+
+    $('downtimeReasons').addEventListener('click', (event) => {
+      const reason = event.target.closest('[data-reason]');
+      if (reason) handleReason(reason.dataset.reason);
+    });
+    $('downtimeSnooze').addEventListener('click', () => {
+      $('downtimeDialog').close();
+      commit(S.snoozeDowntimePrompt(state, state.selected, 60));
+    });
 
     $('simToggle').addEventListener('click', () => {
       state.config.running = !state.config.running;
@@ -458,6 +545,7 @@
   bind();
   render();
   updateSimControls();
+  maybeRaiseDowntimeDialog();
   startSim();
 
   // Exposed for the automated test suite.
@@ -465,6 +553,7 @@
     getState: () => state,
     setState: (next) => { state = next; render(); },
     render,
-    tick: (minutes) => { S.tick(state, minutes); render(); },
+    raisePrompt: maybeRaiseDowntimeDialog,
+    tick: (minutes) => { S.tick(state, minutes); render(); maybeRaiseDowntimeDialog(); },
   };
 }());

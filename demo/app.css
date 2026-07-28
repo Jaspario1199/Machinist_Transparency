@@ -627,6 +627,34 @@ select, textarea {
 }
 textarea { min-height: 80px; resize: vertical; }
 
+
+/* ------------------------------------------------- machinist queue controls */
+
+/*
+ * The machinist owns this queue, so the controls sit on the row itself rather
+ * than behind a request. Sized for a gloved hand like every other control.
+ */
+.qcontrols { display: flex; gap: 6px; align-items: center; flex: none; }
+.qbtn {
+  width: var(--tap);
+  min-height: var(--tap);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: .9rem;
+  line-height: 1;
+}
+.qbtn:hover:not(:disabled) { background: var(--soft); }
+.qbtn:disabled { opacity: .35; cursor: not-allowed; }
+
+.dialog-actions-split { justify-content: space-between; align-items: center; }
+
+@media (max-width: 900px) {
+  .q { flex-wrap: wrap; }
+  .qcontrols { width: 100%; justify-content: flex-end; }
+}
+
 /* ------------------------------------------------------------------ toast */
 
 .toast {
