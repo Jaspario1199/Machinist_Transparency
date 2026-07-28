@@ -724,19 +724,26 @@ test('the demo declares that nothing is connected to a real system', async () =>
 // ------------------------------------------------ theming and distribution ---
 
 test('an explicit data-theme overrides the operating-system preference both ways', async () => {
-  for (const scheme of ['light', 'dark']) {
+  // Read the two palettes rather than pinning hex values, so a re-skin cannot
+  // break this test for the wrong reason.
+  const read = async (scheme, attr) => {
     const context = await browser.newContext({ colorScheme: scheme });
     const page = await context.newPage();
     await page.goto(URL_);
-    const card = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--card').trim());
-
-    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
-    assert.equal(await card(), '#18212e', `data-theme="dark" must win under a ${scheme} OS preference`);
-
-    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
-    assert.equal(await card(), '#ffffff', `data-theme="light" must win under a ${scheme} OS preference`);
-
+    if (attr) await page.evaluate((v) => document.documentElement.setAttribute('data-theme', v), attr);
+    const value = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--card').trim());
     await context.close();
+    return value;
+  };
+
+  const lightCard = await read('light', null);
+  const darkCard = await read('dark', null);
+  assert.notEqual(lightCard, darkCard, 'the two schemes must actually differ');
+
+  for (const scheme of ['light', 'dark']) {
+    assert.equal(await read(scheme, 'dark'), darkCard, `data-theme="dark" must win under a ${scheme} OS preference`);
+    assert.equal(await read(scheme, 'light'), lightCard, `data-theme="light" must win under a ${scheme} OS preference`);
   }
 });
 
