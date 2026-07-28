@@ -50,6 +50,7 @@
       actors: seed.actors,
       machines: seed.machines,
       unassignedOrders: seed.unassignedOrders,
+      programLibrary: seed.programLibrary,
       requests: seed.requests,
       blockers: seed.blockers,
       audit: [],
@@ -770,6 +771,60 @@
       });
   }
 
+
+  /**
+   * The machinist's own time estimate for a prototype.
+   *
+   * Prototypes have no finalised process and no stored program, so there is
+   * nothing to measure against. Rather than manufacture a number, the system
+   * asks the person doing the work and then says whose number it is wherever
+   * it appears. Revisions are audited so the estimate has a history.
+   */
+  function setMachinistEstimate(state, machineId, minutes, note = '') {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const value = Number(minutes);
+    if (!Number.isFinite(value) || value <= 0) return { ok: false, reason: 'Give a time in minutes' };
+
+    const actor = currentActor(state);
+    const previous = machine.active.machinistEstimate;
+    machine.active.programMode = 'PROTOTYPE';
+    machine.active.machinistEstimate = {
+      min: value, by: actor.name, at: Date.now(), note: note.trim(),
+    };
+    machine.active.cycleMedianMin = value;
+    machine.active.cycleSigmaMin = value * 0.35;
+
+    record(state, {
+      machineId,
+      event: previous ? 'PROTOTYPE_ESTIMATE_REVISED' : 'PROTOTYPE_ESTIMATE_SET',
+      wo: machine.active.wo,
+      summary: previous
+        ? `Revised the prototype estimate for ${machine.active.wo} from ${previous.min} to ${value} min${note.trim() ? ` — ${note.trim()}` : ''}`
+        : `Set a prototype estimate of ${value} min for ${machine.active.wo}${note.trim() ? ` — ${note.trim()}` : ''}`,
+    });
+    return { ok: true, message: `Estimate set to ${value} min` };
+  }
+
+  /** Promote a settled prototype to a finalised, tracked program. */
+  function finaliseProcess(state, machineId) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    if (machine.active.programMode !== 'PROTOTYPE') return { ok: false, reason: 'This is not a prototype' };
+    const measured = A.relevantCycles(machine);
+    if (measured.length < 3) {
+      return { ok: false, reason: `Only ${measured.length} cycle${measured.length === 1 ? '' : 's'} measured — run it a few more times before calling the process finalised` };
+    }
+    machine.active.programMode = 'FULL_PROGRAM';
+    record(state, {
+      machineId,
+      event: 'PROCESS_FINALISED',
+      wo: machine.active.wo,
+      summary: `Marked the process for ${machine.active.wo} finalised after ${measured.length} measured cycles. Post and store the program to enable operation-level tracking.`,
+    });
+    return { ok: true, message: 'Process marked finalised' };
+  }
+
   // -------------------------------------------- direct machinist control ---
 
   /**
@@ -919,7 +974,12 @@
         }
 
         if (machine.cycleElapsedMin >= machine.cycleTargetMin) {
-          machine.history.cycles.push({ wo: machine.active.wo, min: Number(machine.cycleTargetMin.toFixed(2)), at: now });
+          machine.history.cycles.push({
+            wo: machine.active.wo,
+            program: machine.active.program,
+            min: Number(machine.cycleTargetMin.toFixed(2)),
+            at: now,
+          });
           machine.active.done = Math.min(machine.active.qty, machine.active.done + 1);
           machine.cycleElapsedMin = 0;
           machine.cycleTargetMin = null;
@@ -1062,6 +1122,8 @@
     startNextJob,
     reorderQueue,
     switchActiveJob,
+    setMachinistEstimate,
+    finaliseProcess,
     UNPLANNED_CATEGORIES,
     REMOVAL_REASONS,
     assignmentIssues,

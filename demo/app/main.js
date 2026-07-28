@@ -85,6 +85,7 @@
 
   function render() {
     const now = Date.now();
+    window.MT_STATE_LIBRARY = state.programLibrary;
     const focusKey = captureFocus();
     const machine = S.selectedMachine(state);
     state.selected = machine.id;
@@ -442,6 +443,30 @@
   }
 
 
+
+  async function handleSetEstimate() {
+    const machine = S.selectedMachine(state);
+    const current = machine.active.machinistEstimate;
+    const answer = await ask({
+      title: current ? 'Update the prototype estimate' : 'Give a prototype estimate',
+      description: `${machine.active.wo} — ${machine.active.part}. Your best guess at minutes per piece. `
+        + 'It is recorded against your name and replaced automatically once three cycles have been measured.',
+      fields: [
+        {
+          type: 'select',
+          name: 'minutes',
+          label: 'Estimated minutes per piece',
+          options: [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+            .map((m) => ({ value: String(m), label: `${m} minutes` })),
+        },
+        { type: 'textarea', name: 'note', label: 'Anything worth noting (optional)' },
+      ],
+      confirmLabel: 'Save estimate',
+    });
+    if (!answer) return;
+    commit(S.setMachinistEstimate(state, machine.id, Number(answer.minutes), answer.note ?? ''));
+  }
+
   async function handleRunNow(wo) {
     const machine = S.selectedMachine(state);
     const job = machine.queue.find((q) => q.wo === wo);
@@ -618,6 +643,8 @@
         case 'resume': commit(S.resumeMachine(state, id), 'Machine resumed'); break;
         case 'request': openRequestDialog(id); break;
         case 'add-job': openAddJobDialog(); break;
+        case 'set-estimate': handleSetEstimate(); break;
+        case 'finalise-process': commit(S.finaliseProcess(state, id)); break;
         case 'open-downtime': {
           const machine = S.selectedMachine(state);
           machine.promptSnoozedUntil = null;

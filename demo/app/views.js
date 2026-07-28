@@ -75,6 +75,11 @@
    * both meaningless and quietly misleading.
    */
   function basisText(basis) {
+    if (basis.source === 'machinist') {
+      return basis.count === 0
+        ? `Not measured — ${basis.median.toFixed(0)} min is ${basis.estimatedBy}'s estimate for this prototype`
+        : `${basis.count} cycle${basis.count === 1 ? '' : 's'} measured so far — still using ${basis.estimatedBy}'s ${basis.median.toFixed(0)} min estimate`;
+    }
     if (basis.source === 'planned') {
       return basis.count === 0
         ? `No cycles observed yet — using the ${basis.median.toFixed(1)} min standard from the D365 routing`
@@ -172,14 +177,53 @@
    */
   /** One-line in-cycle position for the stat row. */
   function inCycleSummary(machine) {
+    if (machine.active.programMode === 'PROTOTYPE') return 'Prototype';
     const p = A.operationProgress(machine);
     if (!p) return 'No op list';
     if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} ops planned`;
     return `Op ${p.current.seq}/${p.ops.length} · ${Math.round(p.percent * 100)}%`;
   }
 
+  /**
+   * A prototype has no finalised process to track against, so the panel says
+   * exactly that and shows whose estimate is being used.
+   */
+  function prototypePanel(machine, proto) {
+    const e = proto.estimate;
+    const measured = proto.measuredCount >= 3
+      ? `<p class="notice ok">${esc(proto.measuredCount)} cycles measured so far, median
+          ${esc(proto.measuredMedian.toFixed(1))} min — that is now driving the completion range instead of the estimate.
+          When the process is settled, mark it finalised and post the program to get operation-level tracking.</p>`
+      : `<p class="notice">${esc(proto.measuredCount)} cycle${proto.measuredCount === 1 ? '' : 's'} measured.
+          After three the measured median takes over from the estimate automatically.</p>`;
+
+    return `<p class="banner warn"><strong>Prototype — process not finalised.</strong>
+        There is no posted, stored program to track against, so nothing here claims to know which operation is running.
+        The completion range uses the machinist's own estimate and says so.</p>
+      ${e ? `<div class="op-headline">
+          <div>
+            <div class="label">Machinist estimate</div>
+            <div class="op-name">${esc(e.min)} min per piece</div>
+            <div class="muted small">Given by ${esc(e.by)} at ${esc(time(e.at))}</div>
+          </div>
+          <div class="right-align">
+            <button class="btn" data-act="set-estimate" data-focus-key="set-estimate">Update estimate</button>
+          </div>
+        </div>
+        ${e.note ? `<blockquote class="note">${esc(e.note)}</blockquote>` : ''}`
+        : `<p class="empty">No estimate yet.
+            <button class="btn" data-act="set-estimate" data-focus-key="set-estimate">Give an estimate</button></p>`}
+      ${measured}
+      <div class="queue-footer">
+        <button class="btn primary" data-act="finalise-process" data-focus-key="finalise-process">Mark the process finalised</button>
+        <span class="muted small">Once the process is settled and the full program is posted and stored, this job gets
+          operation-level progress like any finalised part.</span>
+      </div>`;
+  }
+
   /** Summary line for the operations section header. */
   function operationMeta(machine) {
+    if (machine.active.programMode === 'PROTOTYPE') return 'prototype — machinist estimate';
     const p = A.operationProgress(machine);
     if (!p) return 'no operation list';
     if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} operations planned`;
@@ -187,6 +231,9 @@
   }
 
   function operationStrip(machine) {
+    const proto = A.prototypeState(machine);
+    if (proto) return prototypePanel(machine, proto);
+
     const p = A.operationProgress(machine);
     if (!p) {
       return `<p class="empty">No operation list for ${esc(machine.active.wo)}. Attach the CAMWorks operation list
@@ -195,6 +242,7 @@
 
     const cutting = machine.state === 'PRODUCTION';
     const calib = p.calibration;
+    const library = machine.active.program ? (window.MT_STATE_LIBRARY ?? {})[machine.active.program] : null;
 
     const header = p.current && cutting
       ? `<div class="op-headline">
@@ -216,6 +264,7 @@
         : i < p.currentIndex ? 'done'
           : i === p.currentIndex ? 'active' : 'pending';
       const fill = state === 'done' ? 100 : state === 'active' ? Math.round(p.withinOp * 100) : 0;
+      const status = null;
       return `<li class="op ${esc(state)}">
         <span class="op-seq" aria-hidden="true">${esc(op.seq)}</span>
         <span class="op-main">
@@ -243,6 +292,9 @@
       <p class="muted small">${p.scope === 'JOB'
         ? 'This posted file runs the whole quantity in one go, so the figures above are for the entire job.'
         : 'This posted file makes one piece and is re-run for each. The figures above are for the piece being cut now.'}</p>
+      ${library ? `<p class="muted small">Stored program <code>${esc(machine.active.program)}</code> —
+        ${esc(library.lifetimeRuns.toLocaleString())} lifetime runs across ${esc(library.jobs)} job${library.jobs === 1 ? '' : 's'}.
+        Cycle history follows the program, so a repeat order does not start from nothing.</p>` : ''}
       <p class="muted small">Source: ${esc(machine.active.camSource ?? 'CAM operation list')} ·
         live block number from the ${esc(machine.collector.protocol)} collector. Read-only; nothing is sent to the machine.</p>`;
   }

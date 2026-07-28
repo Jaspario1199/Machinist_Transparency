@@ -23,7 +23,7 @@
   }
 
   /** Cycle observations scattered around a median, with occasional long tails. */
-  function seedCycles(wo, medianMin, sigmaMin, count, endAt, random) {
+  function seedCycles(wo, program, medianMin, sigmaMin, count, endAt, random) {
     const out = [];
     let at = endAt;
     for (let i = 0; i < count; i += 1) {
@@ -31,7 +31,7 @@
       const jitter = (random() - 0.5) * 2 * sigmaMin;
       const min = Math.max(0.5, medianMin + jitter + tail);
       at -= min * MIN;
-      out.unshift({ wo, min: Number(min.toFixed(2)), at });
+      out.unshift({ wo, program, min: Number(min.toFixed(2)), at });
     }
     return out;
   }
@@ -81,6 +81,18 @@
        * machine a released order has been put on, and in what order. Quantity,
        * due date, revision and priority all stay D365's.
        */
+      /**
+       * Stored, posted programs. Fully defined operations are uploaded once and
+       * kept for later runs, so a repeat order of the same part is not starting
+       * from nothing — it inherits everything the shop already measured.
+       */
+      programLibrary: {
+        O20481: { part: 'Sensor Housing A', rev: 'Rev C', lifetimeRuns: 412, jobs: 6, firstPostedAt: now - 180 * 24 * HOUR },
+        O20477: { part: 'Threaded Stem', rev: 'Rev A', lifetimeRuns: 1180, jobs: 11, firstPostedAt: now - 320 * 24 * HOUR },
+        O20503: { part: 'Adapter Plate', rev: 'Rev B', lifetimeRuns: 96, jobs: 3, firstPostedAt: now - 90 * 24 * HOUR },
+        O20511: { part: 'Probe Bracket', rev: 'Rev B', lifetimeRuns: 0, jobs: 0, firstPostedAt: now - 4 * HOUR },
+      },
+
       unassignedOrders: [
         {
           wo: 'WO-20540', part: 'Sensor Housing B', rev: 'Rev B', qty: 30,
@@ -139,6 +151,8 @@
             requestedPriority: 3,
             dueAt: now + 26 * HOUR,
             camSource: 'CAMWorks 2026 · posted 3 days ago',
+            programMode: 'FULL_PROGRAM',
+            programScope: 'PART',
             operations: operations([
               ['Face top', 'T1 — 63 mm face mill', 0.9, 180],
               ['Rough pocket', 'T4 — 12 mm end mill', 3.2, 1270],
@@ -156,7 +170,7 @@
           downtime: null,
           promptedAt: null,
           history: {
-            cycles: seedCycles('WO-20481', 8, 0.6, 34, now - 3 * MIN, random),
+            cycles: seedCycles('WO-20481', 'O20481', 8, 0.6, 34, now - 3 * MIN, random),
             setups: [{ wo: 'WO-20481', min: 38, at: shiftStart + 30 * MIN }],
             downtimes: [
               { code: 'TOOLING', label: 'Tooling issue', owner: 'Manufacturing Engineering', startedAt: shiftStart + 2.2 * HOUR, endedAt: shiftStart + 2.6 * HOUR, note: 'Replaced chipped 1/2" endmill' },
@@ -189,14 +203,19 @@
             path: 'FS1 / Probe Bracket / Rev B',
             requestedPriority: 2,
             dueAt: now + 30 * HOUR,
-            camSource: 'CAMWorks 2026 · posted this morning',
-            operations: operations([
-              ['Face and square', 'T1 — 50 mm face mill', 1.1, 210],
-              ['Rough profile', 'T4 — 10 mm end mill', 3.6, 1480],
-              ['Finish profile', 'T6 — 6 mm end mill', 2.4, 1220],
-              ['Drill 2 × \u00d86.8', 'T7 — 6.8 mm drill', 1.2, 190],
-              ['Tap M8', 'T8 — M8 tap', 0.7, 90],
-            ]),
+            /**
+             * A prototype. The process is not finalised, so there is no posted
+             * program to track against — the machinist gives an estimate and
+             * the system says whose number it is.
+             */
+            programMode: 'PROTOTYPE',
+            programScope: 'PART',
+            machinistEstimate: {
+              min: 9,
+              by: 'R. Delgado',
+              at: now - 20 * MIN,
+              note: 'First article. Running one operation at a time until the process settles.',
+            },
           },
           queue: [
             { wo: 'WO-20524', part: 'Cover Plate', qty: 30, cycleMedianMin: 5, cycleSigmaMin: 0.4, setupMin: 20, program: 'O20524', ready: 'Material ready', readyCode: 'READY', requestedPriority: 3, dueAt: now + 44 * HOUR },
@@ -205,7 +224,7 @@
           downtime: null,
           promptedAt: null,
           history: {
-            cycles: seedCycles('WO-20488', 9.4, 1.4, 22, shiftStart + 5.5 * HOUR, random),
+            cycles: seedCycles('WO-20488', 'O20488', 9.4, 1.4, 22, shiftStart + 5.5 * HOUR, random),
             setups: [
               { wo: 'WO-20488', min: 44, at: shiftStart + 20 * MIN },
               { wo: 'WO-20511', min: 40, at: now - 18 * MIN },
@@ -242,6 +261,8 @@
             requestedPriority: 2,
             dueAt: now + 12 * HOUR,
             camSource: 'CAMWorks 2026 · posted last week',
+            programMode: 'FULL_PROGRAM',
+            programScope: 'PART',
             operations: operations([
               ['Face and rough OD', 'T1 — CNMG rougher', 1.4, 320],
               ['Finish OD', 'T3 — DNMG finisher', 0.9, 320],
@@ -256,7 +277,7 @@
           downtime: null,
           promptedAt: now - 9 * MIN + 3 * MIN,
           history: {
-            cycles: seedCycles('WO-20477', 4, 0.25, 62, now - 9 * MIN, random),
+            cycles: seedCycles('WO-20477', 'O20477', 4, 0.25, 62, now - 9 * MIN, random),
             setups: [{ wo: 'WO-20477', min: 31, at: shiftStart + 15 * MIN }],
             downtimes: [
               { code: 'MACHINE_FAULT', label: 'Machine fault', owner: 'Maintenance', startedAt: shiftStart + 3.0 * HOUR, endedAt: shiftStart + 3.4 * HOUR, note: 'Tailstock pressure alarm' },

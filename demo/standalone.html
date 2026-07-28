@@ -665,6 +665,8 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .op.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
 .op.done { opacity: .62; }
+.op.unposted { border-style: dashed; opacity: .72; }
+.op.unposted .op-track { visibility: hidden; }
 .op-seq {
   width: 26px; height: 26px; flex: none;
   display: grid; place-items: center;
@@ -1210,7 +1212,7 @@ window.DOWNTIME_REASONS = [
   }
 
   /** Cycle observations scattered around a median, with occasional long tails. */
-  function seedCycles(wo, medianMin, sigmaMin, count, endAt, random) {
+  function seedCycles(wo, program, medianMin, sigmaMin, count, endAt, random) {
     const out = [];
     let at = endAt;
     for (let i = 0; i < count; i += 1) {
@@ -1218,7 +1220,7 @@ window.DOWNTIME_REASONS = [
       const jitter = (random() - 0.5) * 2 * sigmaMin;
       const min = Math.max(0.5, medianMin + jitter + tail);
       at -= min * MIN;
-      out.unshift({ wo, min: Number(min.toFixed(2)), at });
+      out.unshift({ wo, program, min: Number(min.toFixed(2)), at });
     }
     return out;
   }
@@ -1268,6 +1270,18 @@ window.DOWNTIME_REASONS = [
        * machine a released order has been put on, and in what order. Quantity,
        * due date, revision and priority all stay D365's.
        */
+      /**
+       * Stored, posted programs. Fully defined operations are uploaded once and
+       * kept for later runs, so a repeat order of the same part is not starting
+       * from nothing — it inherits everything the shop already measured.
+       */
+      programLibrary: {
+        O20481: { part: 'Sensor Housing A', rev: 'Rev C', lifetimeRuns: 412, jobs: 6, firstPostedAt: now - 180 * 24 * HOUR },
+        O20477: { part: 'Threaded Stem', rev: 'Rev A', lifetimeRuns: 1180, jobs: 11, firstPostedAt: now - 320 * 24 * HOUR },
+        O20503: { part: 'Adapter Plate', rev: 'Rev B', lifetimeRuns: 96, jobs: 3, firstPostedAt: now - 90 * 24 * HOUR },
+        O20511: { part: 'Probe Bracket', rev: 'Rev B', lifetimeRuns: 0, jobs: 0, firstPostedAt: now - 4 * HOUR },
+      },
+
       unassignedOrders: [
         {
           wo: 'WO-20540', part: 'Sensor Housing B', rev: 'Rev B', qty: 30,
@@ -1326,6 +1340,8 @@ window.DOWNTIME_REASONS = [
             requestedPriority: 3,
             dueAt: now + 26 * HOUR,
             camSource: 'CAMWorks 2026 · posted 3 days ago',
+            programMode: 'FULL_PROGRAM',
+            programScope: 'PART',
             operations: operations([
               ['Face top', 'T1 — 63 mm face mill', 0.9, 180],
               ['Rough pocket', 'T4 — 12 mm end mill', 3.2, 1270],
@@ -1343,7 +1359,7 @@ window.DOWNTIME_REASONS = [
           downtime: null,
           promptedAt: null,
           history: {
-            cycles: seedCycles('WO-20481', 8, 0.6, 34, now - 3 * MIN, random),
+            cycles: seedCycles('WO-20481', 'O20481', 8, 0.6, 34, now - 3 * MIN, random),
             setups: [{ wo: 'WO-20481', min: 38, at: shiftStart + 30 * MIN }],
             downtimes: [
               { code: 'TOOLING', label: 'Tooling issue', owner: 'Manufacturing Engineering', startedAt: shiftStart + 2.2 * HOUR, endedAt: shiftStart + 2.6 * HOUR, note: 'Replaced chipped 1/2" endmill' },
@@ -1376,14 +1392,19 @@ window.DOWNTIME_REASONS = [
             path: 'FS1 / Probe Bracket / Rev B',
             requestedPriority: 2,
             dueAt: now + 30 * HOUR,
-            camSource: 'CAMWorks 2026 · posted this morning',
-            operations: operations([
-              ['Face and square', 'T1 — 50 mm face mill', 1.1, 210],
-              ['Rough profile', 'T4 — 10 mm end mill', 3.6, 1480],
-              ['Finish profile', 'T6 — 6 mm end mill', 2.4, 1220],
-              ['Drill 2 × \u00d86.8', 'T7 — 6.8 mm drill', 1.2, 190],
-              ['Tap M8', 'T8 — M8 tap', 0.7, 90],
-            ]),
+            /**
+             * A prototype. The process is not finalised, so there is no posted
+             * program to track against — the machinist gives an estimate and
+             * the system says whose number it is.
+             */
+            programMode: 'PROTOTYPE',
+            programScope: 'PART',
+            machinistEstimate: {
+              min: 9,
+              by: 'R. Delgado',
+              at: now - 20 * MIN,
+              note: 'First article. Running one operation at a time until the process settles.',
+            },
           },
           queue: [
             { wo: 'WO-20524', part: 'Cover Plate', qty: 30, cycleMedianMin: 5, cycleSigmaMin: 0.4, setupMin: 20, program: 'O20524', ready: 'Material ready', readyCode: 'READY', requestedPriority: 3, dueAt: now + 44 * HOUR },
@@ -1392,7 +1413,7 @@ window.DOWNTIME_REASONS = [
           downtime: null,
           promptedAt: null,
           history: {
-            cycles: seedCycles('WO-20488', 9.4, 1.4, 22, shiftStart + 5.5 * HOUR, random),
+            cycles: seedCycles('WO-20488', 'O20488', 9.4, 1.4, 22, shiftStart + 5.5 * HOUR, random),
             setups: [
               { wo: 'WO-20488', min: 44, at: shiftStart + 20 * MIN },
               { wo: 'WO-20511', min: 40, at: now - 18 * MIN },
@@ -1429,6 +1450,8 @@ window.DOWNTIME_REASONS = [
             requestedPriority: 2,
             dueAt: now + 12 * HOUR,
             camSource: 'CAMWorks 2026 · posted last week',
+            programMode: 'FULL_PROGRAM',
+            programScope: 'PART',
             operations: operations([
               ['Face and rough OD', 'T1 — CNMG rougher', 1.4, 320],
               ['Finish OD', 'T3 — DNMG finisher', 0.9, 320],
@@ -1443,7 +1466,7 @@ window.DOWNTIME_REASONS = [
           downtime: null,
           promptedAt: now - 9 * MIN + 3 * MIN,
           history: {
-            cycles: seedCycles('WO-20477', 4, 0.25, 62, now - 9 * MIN, random),
+            cycles: seedCycles('WO-20477', 'O20477', 4, 0.25, 62, now - 9 * MIN, random),
             setups: [{ wo: 'WO-20477', min: 31, at: shiftStart + 15 * MIN }],
             downtimes: [
               { code: 'MACHINE_FAULT', label: 'Machine fault', owner: 'Maintenance', startedAt: shiftStart + 3.0 * HOUR, endedAt: shiftStart + 3.4 * HOUR, note: 'Tailstock pressure alarm' },
@@ -1535,17 +1558,39 @@ window.DOWNTIME_REASONS = [
    * planned/standard values until enough real cycles exist. The fallback is
    * reported so the UI can say "planned" rather than implying measurement.
    */
+  /**
+   * Cycles belonging to the work being done now.
+   *
+   * Keyed on the PROGRAM, not the work order. A fully defined program is
+   * uploaded once and re-run for later orders, so a repeat job of a part the
+   * shop has cut 400 times must inherit that history instead of starting cold.
+   * Falls back to the work order for work that has no program — unplanned jobs,
+   * and older records from before programs were tracked.
+   */
+  function relevantCycles(machine) {
+    const program = machine.active.program;
+    if (program && program !== '—') {
+      const byProgram = machine.history.cycles.filter((c) => c.program === program);
+      if (byProgram.length) return byProgram;
+    }
+    return machine.history.cycles.filter((c) => c.wo === machine.active.wo);
+  }
+
   function cycleStats(machine) {
-    const observed = machine.history.cycles
-      .filter((c) => c.wo === machine.active.wo)
-      .map((c) => c.min);
+    const observed = relevantCycles(machine).map((c) => c.min);
 
     if (observed.length < 3) {
+      // On a prototype the fallback is the machinist's own estimate, and it is
+      // labelled as such rather than dressed up as a routing standard.
+      const estimate = machine.active.programMode === 'PROTOTYPE'
+        ? machine.active.machinistEstimate
+        : null;
       return {
-        source: 'planned',
+        source: estimate ? 'machinist' : 'planned',
         count: observed.length,
-        median: machine.active.cycleMedianMin,
-        sigma: machine.active.cycleSigmaMin,
+        median: estimate ? estimate.min : machine.active.cycleMedianMin,
+        sigma: estimate ? estimate.min * 0.35 : machine.active.cycleSigmaMin,
+        estimatedBy: estimate ? estimate.by : null,
       };
     }
     const med = median(observed);
@@ -1599,6 +1644,9 @@ window.DOWNTIME_REASONS = [
     let confidence = 'Low';
     if (stats.source === 'observed' && stats.count >= 8 && cv <= 0.08 && !blockers.length) confidence = 'High';
     else if (stats.count >= 3 && cv <= 0.2) confidence = 'Medium';
+    // A prototype is by definition an unsettled process; it never claims better
+    // than medium, however clean the few cycles so far happen to look.
+    if (machine.active.programMode === 'PROTOTYPE' && confidence === 'High') confidence = 'Medium';
 
     return {
       blocked: false,
@@ -1619,6 +1667,12 @@ window.DOWNTIME_REASONS = [
       const b = ctx.blockers[0];
       return `Open blocker: ${b.label} (${b.owner})`;
     }
+    if (machine.active.programMode === 'PROTOTYPE') {
+      const proto = prototypeState(machine);
+      return proto && proto.measuredCount >= 3
+        ? `Prototype — process not finalised, though ${proto.measuredCount} cycles have now been measured`
+        : `Prototype — machinist estimate${ctx.stats.estimatedBy ? ` from ${ctx.stats.estimatedBy}` : ''}, not a measured figure`;
+    }
     if (machine.state === 'SETUP') {
       return `Setup in progress — ${Math.round(machine.setupRemainingMin)} min remaining, not yet cutting`;
     }
@@ -1631,6 +1685,9 @@ window.DOWNTIME_REASONS = [
     }
     if (ctx.stats.source === 'planned') {
       return 'Based on planned cycle time — too few observed cycles yet';
+    }
+    if (ctx.stats.source === 'machinist') {
+      return `Machinist estimate${ctx.stats.estimatedBy ? ` from ${ctx.stats.estimatedBy}` : ''} — not yet measured`;
     }
     if (!machine.collector.online) {
       return 'Collector offline — progress may be stale';
@@ -1838,9 +1895,7 @@ window.DOWNTIME_REASONS = [
    * all of that for us.
    */
   function programCalibration(machine, totalEstMin) {
-    const observed = machine.history.cycles
-      .filter((c) => c.wo === machine.active.wo)
-      .map((c) => c.min);
+    const observed = relevantCycles(machine).map((c) => c.min);
     if (observed.length < 3 || !totalEstMin) return null;
 
     const actual = median(observed);
@@ -1850,6 +1905,27 @@ window.DOWNTIME_REASONS = [
       actualMin: actual,
       factor: actual / totalEstMin,
       variancePct: ((actual - totalEstMin) / totalEstMin) * 100,
+    };
+  }
+
+
+  /**
+   * Is this a prototype rather than a finalised process?
+   *
+   * A prototype has no posted, stored program to track against — the process is
+   * still being worked out. The machinist gives an estimate, and the system is
+   * explicit that it is the machinist's number and not a measurement. Once the
+   * process is finalised and the program is posted and stored, the job moves to
+   * FULL_PROGRAM and everything else in this file applies normally.
+   */
+  function prototypeState(machine) {
+    if (machine.active.programMode !== 'PROTOTYPE') return null;
+    const estimate = machine.active.machinistEstimate ?? null;
+    const measured = relevantCycles(machine).map((c) => c.min);
+    return {
+      estimate,
+      measuredCount: measured.length,
+      measuredMedian: measured.length ? median(measured) : null,
     };
   }
 
@@ -1901,6 +1977,8 @@ window.DOWNTIME_REASONS = [
     tendingScore,
     operationProgress,
     programCalibration,
+    prototypeState,
+    relevantCycles,
     blockAtTimeFraction,
     formatRange,
     formatClockRange,
@@ -1961,6 +2039,7 @@ window.DOWNTIME_REASONS = [
       actors: seed.actors,
       machines: seed.machines,
       unassignedOrders: seed.unassignedOrders,
+      programLibrary: seed.programLibrary,
       requests: seed.requests,
       blockers: seed.blockers,
       audit: [],
@@ -2681,6 +2760,60 @@ window.DOWNTIME_REASONS = [
       });
   }
 
+
+  /**
+   * The machinist's own time estimate for a prototype.
+   *
+   * Prototypes have no finalised process and no stored program, so there is
+   * nothing to measure against. Rather than manufacture a number, the system
+   * asks the person doing the work and then says whose number it is wherever
+   * it appears. Revisions are audited so the estimate has a history.
+   */
+  function setMachinistEstimate(state, machineId, minutes, note = '') {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const value = Number(minutes);
+    if (!Number.isFinite(value) || value <= 0) return { ok: false, reason: 'Give a time in minutes' };
+
+    const actor = currentActor(state);
+    const previous = machine.active.machinistEstimate;
+    machine.active.programMode = 'PROTOTYPE';
+    machine.active.machinistEstimate = {
+      min: value, by: actor.name, at: Date.now(), note: note.trim(),
+    };
+    machine.active.cycleMedianMin = value;
+    machine.active.cycleSigmaMin = value * 0.35;
+
+    record(state, {
+      machineId,
+      event: previous ? 'PROTOTYPE_ESTIMATE_REVISED' : 'PROTOTYPE_ESTIMATE_SET',
+      wo: machine.active.wo,
+      summary: previous
+        ? `Revised the prototype estimate for ${machine.active.wo} from ${previous.min} to ${value} min${note.trim() ? ` — ${note.trim()}` : ''}`
+        : `Set a prototype estimate of ${value} min for ${machine.active.wo}${note.trim() ? ` — ${note.trim()}` : ''}`,
+    });
+    return { ok: true, message: `Estimate set to ${value} min` };
+  }
+
+  /** Promote a settled prototype to a finalised, tracked program. */
+  function finaliseProcess(state, machineId) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    if (machine.active.programMode !== 'PROTOTYPE') return { ok: false, reason: 'This is not a prototype' };
+    const measured = A.relevantCycles(machine);
+    if (measured.length < 3) {
+      return { ok: false, reason: `Only ${measured.length} cycle${measured.length === 1 ? '' : 's'} measured — run it a few more times before calling the process finalised` };
+    }
+    machine.active.programMode = 'FULL_PROGRAM';
+    record(state, {
+      machineId,
+      event: 'PROCESS_FINALISED',
+      wo: machine.active.wo,
+      summary: `Marked the process for ${machine.active.wo} finalised after ${measured.length} measured cycles. Post and store the program to enable operation-level tracking.`,
+    });
+    return { ok: true, message: 'Process marked finalised' };
+  }
+
   // -------------------------------------------- direct machinist control ---
 
   /**
@@ -2830,7 +2963,12 @@ window.DOWNTIME_REASONS = [
         }
 
         if (machine.cycleElapsedMin >= machine.cycleTargetMin) {
-          machine.history.cycles.push({ wo: machine.active.wo, min: Number(machine.cycleTargetMin.toFixed(2)), at: now });
+          machine.history.cycles.push({
+            wo: machine.active.wo,
+            program: machine.active.program,
+            min: Number(machine.cycleTargetMin.toFixed(2)),
+            at: now,
+          });
           machine.active.done = Math.min(machine.active.qty, machine.active.done + 1);
           machine.cycleElapsedMin = 0;
           machine.cycleTargetMin = null;
@@ -2973,6 +3111,8 @@ window.DOWNTIME_REASONS = [
     startNextJob,
     reorderQueue,
     switchActiveJob,
+    setMachinistEstimate,
+    finaliseProcess,
     UNPLANNED_CATEGORIES,
     REMOVAL_REASONS,
     assignmentIssues,
@@ -3075,6 +3215,11 @@ window.DOWNTIME_REASONS = [
    * both meaningless and quietly misleading.
    */
   function basisText(basis) {
+    if (basis.source === 'machinist') {
+      return basis.count === 0
+        ? `Not measured — ${basis.median.toFixed(0)} min is ${basis.estimatedBy}'s estimate for this prototype`
+        : `${basis.count} cycle${basis.count === 1 ? '' : 's'} measured so far — still using ${basis.estimatedBy}'s ${basis.median.toFixed(0)} min estimate`;
+    }
     if (basis.source === 'planned') {
       return basis.count === 0
         ? `No cycles observed yet — using the ${basis.median.toFixed(1)} min standard from the D365 routing`
@@ -3172,14 +3317,53 @@ window.DOWNTIME_REASONS = [
    */
   /** One-line in-cycle position for the stat row. */
   function inCycleSummary(machine) {
+    if (machine.active.programMode === 'PROTOTYPE') return 'Prototype';
     const p = A.operationProgress(machine);
     if (!p) return 'No op list';
     if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} ops planned`;
     return `Op ${p.current.seq}/${p.ops.length} · ${Math.round(p.percent * 100)}%`;
   }
 
+  /**
+   * A prototype has no finalised process to track against, so the panel says
+   * exactly that and shows whose estimate is being used.
+   */
+  function prototypePanel(machine, proto) {
+    const e = proto.estimate;
+    const measured = proto.measuredCount >= 3
+      ? `<p class="notice ok">${esc(proto.measuredCount)} cycles measured so far, median
+          ${esc(proto.measuredMedian.toFixed(1))} min — that is now driving the completion range instead of the estimate.
+          When the process is settled, mark it finalised and post the program to get operation-level tracking.</p>`
+      : `<p class="notice">${esc(proto.measuredCount)} cycle${proto.measuredCount === 1 ? '' : 's'} measured.
+          After three the measured median takes over from the estimate automatically.</p>`;
+
+    return `<p class="banner warn"><strong>Prototype — process not finalised.</strong>
+        There is no posted, stored program to track against, so nothing here claims to know which operation is running.
+        The completion range uses the machinist's own estimate and says so.</p>
+      ${e ? `<div class="op-headline">
+          <div>
+            <div class="label">Machinist estimate</div>
+            <div class="op-name">${esc(e.min)} min per piece</div>
+            <div class="muted small">Given by ${esc(e.by)} at ${esc(time(e.at))}</div>
+          </div>
+          <div class="right-align">
+            <button class="btn" data-act="set-estimate" data-focus-key="set-estimate">Update estimate</button>
+          </div>
+        </div>
+        ${e.note ? `<blockquote class="note">${esc(e.note)}</blockquote>` : ''}`
+        : `<p class="empty">No estimate yet.
+            <button class="btn" data-act="set-estimate" data-focus-key="set-estimate">Give an estimate</button></p>`}
+      ${measured}
+      <div class="queue-footer">
+        <button class="btn primary" data-act="finalise-process" data-focus-key="finalise-process">Mark the process finalised</button>
+        <span class="muted small">Once the process is settled and the full program is posted and stored, this job gets
+          operation-level progress like any finalised part.</span>
+      </div>`;
+  }
+
   /** Summary line for the operations section header. */
   function operationMeta(machine) {
+    if (machine.active.programMode === 'PROTOTYPE') return 'prototype — machinist estimate';
     const p = A.operationProgress(machine);
     if (!p) return 'no operation list';
     if (machine.state !== 'PRODUCTION' || !p.current) return `${p.ops.length} operations planned`;
@@ -3187,6 +3371,9 @@ window.DOWNTIME_REASONS = [
   }
 
   function operationStrip(machine) {
+    const proto = A.prototypeState(machine);
+    if (proto) return prototypePanel(machine, proto);
+
     const p = A.operationProgress(machine);
     if (!p) {
       return `<p class="empty">No operation list for ${esc(machine.active.wo)}. Attach the CAMWorks operation list
@@ -3195,6 +3382,7 @@ window.DOWNTIME_REASONS = [
 
     const cutting = machine.state === 'PRODUCTION';
     const calib = p.calibration;
+    const library = machine.active.program ? (window.MT_STATE_LIBRARY ?? {})[machine.active.program] : null;
 
     const header = p.current && cutting
       ? `<div class="op-headline">
@@ -3216,6 +3404,7 @@ window.DOWNTIME_REASONS = [
         : i < p.currentIndex ? 'done'
           : i === p.currentIndex ? 'active' : 'pending';
       const fill = state === 'done' ? 100 : state === 'active' ? Math.round(p.withinOp * 100) : 0;
+      const status = null;
       return `<li class="op ${esc(state)}">
         <span class="op-seq" aria-hidden="true">${esc(op.seq)}</span>
         <span class="op-main">
@@ -3243,6 +3432,9 @@ window.DOWNTIME_REASONS = [
       <p class="muted small">${p.scope === 'JOB'
         ? 'This posted file runs the whole quantity in one go, so the figures above are for the entire job.'
         : 'This posted file makes one piece and is re-run for each. The figures above are for the piece being cut now.'}</p>
+      ${library ? `<p class="muted small">Stored program <code>${esc(machine.active.program)}</code> —
+        ${esc(library.lifetimeRuns.toLocaleString())} lifetime runs across ${esc(library.jobs)} job${library.jobs === 1 ? '' : 's'}.
+        Cycle history follows the program, so a repeat order does not start from nothing.</p>` : ''}
       <p class="muted small">Source: ${esc(machine.active.camSource ?? 'CAM operation list')} ·
         live block number from the ${esc(machine.collector.protocol)} collector. Read-only; nothing is sent to the machine.</p>`;
   }
@@ -3712,6 +3904,7 @@ window.DOWNTIME_REASONS = [
 
   function render() {
     const now = Date.now();
+    window.MT_STATE_LIBRARY = state.programLibrary;
     const focusKey = captureFocus();
     const machine = S.selectedMachine(state);
     state.selected = machine.id;
@@ -4069,6 +4262,30 @@ window.DOWNTIME_REASONS = [
   }
 
 
+
+  async function handleSetEstimate() {
+    const machine = S.selectedMachine(state);
+    const current = machine.active.machinistEstimate;
+    const answer = await ask({
+      title: current ? 'Update the prototype estimate' : 'Give a prototype estimate',
+      description: `${machine.active.wo} — ${machine.active.part}. Your best guess at minutes per piece. `
+        + 'It is recorded against your name and replaced automatically once three cycles have been measured.',
+      fields: [
+        {
+          type: 'select',
+          name: 'minutes',
+          label: 'Estimated minutes per piece',
+          options: [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+            .map((m) => ({ value: String(m), label: `${m} minutes` })),
+        },
+        { type: 'textarea', name: 'note', label: 'Anything worth noting (optional)' },
+      ],
+      confirmLabel: 'Save estimate',
+    });
+    if (!answer) return;
+    commit(S.setMachinistEstimate(state, machine.id, Number(answer.minutes), answer.note ?? ''));
+  }
+
   async function handleRunNow(wo) {
     const machine = S.selectedMachine(state);
     const job = machine.queue.find((q) => q.wo === wo);
@@ -4245,6 +4462,8 @@ window.DOWNTIME_REASONS = [
         case 'resume': commit(S.resumeMachine(state, id), 'Machine resumed'); break;
         case 'request': openRequestDialog(id); break;
         case 'add-job': openAddJobDialog(); break;
+        case 'set-estimate': handleSetEstimate(); break;
+        case 'finalise-process': commit(S.finaliseProcess(state, id)); break;
         case 'open-downtime': {
           const machine = S.selectedMachine(state);
           machine.promptSnoozedUntil = null;

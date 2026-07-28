@@ -1217,3 +1217,106 @@ test('the wording follows whether the posted file makes one part or the whole jo
   assert.match(body, /Through the whole job/);
   assert.match(body, /runs the whole quantity in one go/);
 });
+
+// ------------------------------------------------- prototypes vs finalised ---
+
+test('a prototype uses the machinist estimate and never claims to be measuring', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-2"]');
+  await openSections(page);
+
+  const body = await page.textContent('#panel');
+  assert.match(body, /Prototype — process not finalised/);
+  assert.match(body, /no posted, stored program to track against/);
+  assert.match(body, /9 min per piece/);
+  assert.match(body, /Given by R\. Delgado/);
+
+  const basis = await page.textContent('#panel .eta-basis');
+  assert.match(basis, /Not measured/, 'a prototype estimate must not be described as measured');
+  assert.doesNotMatch(basis, /Measured from 0/, 'must never claim a measurement it has not made');
+  assert.match(await page.textContent('#panel .eta-risk'), /machinist estimate from R\. Delgado/);
+
+  // No operation-level claims are made without a program to back them.
+  assert.equal((await page.$$('#panel .op')).length, 0);
+  assert.equal(await page.evaluate(() =>
+    window.MT_ANALYTICS.operationProgress(window.MT_DEBUG.getState().machines[1])), null);
+});
+
+test('the machinist can set and revise the estimate, and revisions are audited', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-2"]');
+  await openSections(page);
+
+  await page.click('[data-act="set-estimate"]');
+  await page.waitForSelector('#promptDialog[open]');
+  await page.selectOption('#promptFields select', '20');
+  await page.fill('#promptFields textarea', 'Second op slower than expected');
+  await page.click('#promptConfirm');
+
+  const state = await getState(page);
+  const estimate = state.machines[1].active.machinistEstimate;
+  assert.equal(estimate.min, 20);
+  assert.equal(estimate.by, 'R. Delgado');
+  assert.equal(estimate.note, 'Second op slower than expected');
+
+  const entry = state.audit.find((a) => a.event === 'PROTOTYPE_ESTIMATE_REVISED');
+  assert.match(entry.summary, /from 9 to 20 min/, 'the previous estimate must stay in the record');
+});
+
+test('a process cannot be called finalised before it has been measured', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-2"]');
+  await openSections(page);
+  await page.click('[data-act="finalise-process"]');
+
+  assert.match((await page.textContent('#toast')).trim(), /run it a few more times/);
+  assert.equal((await getState(page)).machines[1].active.programMode, 'PROTOTYPE');
+
+  // With cycles behind it, finalising is allowed and recorded.
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[1];
+    m.history.cycles = [1, 2, 3, 4].map(() => ({ wo: m.active.wo, program: m.active.program, min: 9.1, at: Date.now() }));
+    window.MT_DEBUG.setState(s);
+  });
+  await openSections(page);
+  await page.click('[data-act="finalise-process"]');
+  const state = await getState(page);
+  assert.equal(state.machines[1].active.programMode, 'FULL_PROGRAM');
+  assert.ok(state.audit.some((a) => a.event === 'PROCESS_FINALISED'));
+});
+
+test('measured cycles take over from the estimate automatically', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[1];
+    m.history.cycles = [8.8, 9.2, 9.0, 8.9].map((min) => ({ wo: m.active.wo, program: m.active.program, min, at: Date.now() }));
+    window.MT_DEBUG.setState(s);
+  });
+  const stats = await page.evaluate(() =>
+    window.MT_ANALYTICS.cycleStats(window.MT_DEBUG.getState().machines[1]));
+  assert.equal(stats.source, 'observed', 'once measured, the estimate is no longer used');
+  assert.ok(stats.median > 8.5 && stats.median < 9.5);
+});
+
+test('cycle history follows the program, so a repeat order does not start cold', async () => {
+  const page = await open();
+  const result = await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[0];
+    m.active.wo = 'WO-30999';       // brand-new order, same stored program
+    return window.MT_ANALYTICS.cycleStats(m);
+  });
+  assert.equal(result.source, 'observed', 'a repeat order must inherit the program history');
+  assert.ok(result.count >= 30, `expected the program's cycles, got ${result.count}`);
+});
+
+test('the stored program library is surfaced with its lifetime run count', async () => {
+  const page = await open();
+  await openSections(page);
+  const body = await page.textContent('#panel');
+  assert.match(body, /Stored program/);
+  assert.match(body, /412 lifetime runs across 6 jobs/);
+  assert.match(body, /repeat order does not start from nothing/);
+});

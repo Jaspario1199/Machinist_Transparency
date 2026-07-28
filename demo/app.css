@@ -656,6 +656,8 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .op.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
 .op.done { opacity: .62; }
+.op.unposted { border-style: dashed; opacity: .72; }
+.op.unposted .op-track { visibility: hidden; }
 .op-seq {
   width: 26px; height: 26px; flex: none;
   display: grid; place-items: center;

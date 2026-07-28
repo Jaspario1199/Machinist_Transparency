@@ -38,17 +38,39 @@
    * planned/standard values until enough real cycles exist. The fallback is
    * reported so the UI can say "planned" rather than implying measurement.
    */
+  /**
+   * Cycles belonging to the work being done now.
+   *
+   * Keyed on the PROGRAM, not the work order. A fully defined program is
+   * uploaded once and re-run for later orders, so a repeat job of a part the
+   * shop has cut 400 times must inherit that history instead of starting cold.
+   * Falls back to the work order for work that has no program — unplanned jobs,
+   * and older records from before programs were tracked.
+   */
+  function relevantCycles(machine) {
+    const program = machine.active.program;
+    if (program && program !== '—') {
+      const byProgram = machine.history.cycles.filter((c) => c.program === program);
+      if (byProgram.length) return byProgram;
+    }
+    return machine.history.cycles.filter((c) => c.wo === machine.active.wo);
+  }
+
   function cycleStats(machine) {
-    const observed = machine.history.cycles
-      .filter((c) => c.wo === machine.active.wo)
-      .map((c) => c.min);
+    const observed = relevantCycles(machine).map((c) => c.min);
 
     if (observed.length < 3) {
+      // On a prototype the fallback is the machinist's own estimate, and it is
+      // labelled as such rather than dressed up as a routing standard.
+      const estimate = machine.active.programMode === 'PROTOTYPE'
+        ? machine.active.machinistEstimate
+        : null;
       return {
-        source: 'planned',
+        source: estimate ? 'machinist' : 'planned',
         count: observed.length,
-        median: machine.active.cycleMedianMin,
-        sigma: machine.active.cycleSigmaMin,
+        median: estimate ? estimate.min : machine.active.cycleMedianMin,
+        sigma: estimate ? estimate.min * 0.35 : machine.active.cycleSigmaMin,
+        estimatedBy: estimate ? estimate.by : null,
       };
     }
     const med = median(observed);
@@ -102,6 +124,9 @@
     let confidence = 'Low';
     if (stats.source === 'observed' && stats.count >= 8 && cv <= 0.08 && !blockers.length) confidence = 'High';
     else if (stats.count >= 3 && cv <= 0.2) confidence = 'Medium';
+    // A prototype is by definition an unsettled process; it never claims better
+    // than medium, however clean the few cycles so far happen to look.
+    if (machine.active.programMode === 'PROTOTYPE' && confidence === 'High') confidence = 'Medium';
 
     return {
       blocked: false,
@@ -122,6 +147,12 @@
       const b = ctx.blockers[0];
       return `Open blocker: ${b.label} (${b.owner})`;
     }
+    if (machine.active.programMode === 'PROTOTYPE') {
+      const proto = prototypeState(machine);
+      return proto && proto.measuredCount >= 3
+        ? `Prototype — process not finalised, though ${proto.measuredCount} cycles have now been measured`
+        : `Prototype — machinist estimate${ctx.stats.estimatedBy ? ` from ${ctx.stats.estimatedBy}` : ''}, not a measured figure`;
+    }
     if (machine.state === 'SETUP') {
       return `Setup in progress — ${Math.round(machine.setupRemainingMin)} min remaining, not yet cutting`;
     }
@@ -134,6 +165,9 @@
     }
     if (ctx.stats.source === 'planned') {
       return 'Based on planned cycle time — too few observed cycles yet';
+    }
+    if (ctx.stats.source === 'machinist') {
+      return `Machinist estimate${ctx.stats.estimatedBy ? ` from ${ctx.stats.estimatedBy}` : ''} — not yet measured`;
     }
     if (!machine.collector.online) {
       return 'Collector offline — progress may be stale';
@@ -341,9 +375,7 @@
    * all of that for us.
    */
   function programCalibration(machine, totalEstMin) {
-    const observed = machine.history.cycles
-      .filter((c) => c.wo === machine.active.wo)
-      .map((c) => c.min);
+    const observed = relevantCycles(machine).map((c) => c.min);
     if (observed.length < 3 || !totalEstMin) return null;
 
     const actual = median(observed);
@@ -353,6 +385,27 @@
       actualMin: actual,
       factor: actual / totalEstMin,
       variancePct: ((actual - totalEstMin) / totalEstMin) * 100,
+    };
+  }
+
+
+  /**
+   * Is this a prototype rather than a finalised process?
+   *
+   * A prototype has no posted, stored program to track against — the process is
+   * still being worked out. The machinist gives an estimate, and the system is
+   * explicit that it is the machinist's number and not a measurement. Once the
+   * process is finalised and the program is posted and stored, the job moves to
+   * FULL_PROGRAM and everything else in this file applies normally.
+   */
+  function prototypeState(machine) {
+    if (machine.active.programMode !== 'PROTOTYPE') return null;
+    const estimate = machine.active.machinistEstimate ?? null;
+    const measured = relevantCycles(machine).map((c) => c.min);
+    return {
+      estimate,
+      measuredCount: measured.length,
+      measuredMedian: measured.length ? median(measured) : null,
     };
   }
 
@@ -404,6 +457,8 @@
     tendingScore,
     operationProgress,
     programCalibration,
+    prototypeState,
+    relevantCycles,
     blockAtTimeFraction,
     formatRange,
     formatClockRange,
