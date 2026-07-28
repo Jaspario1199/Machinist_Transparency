@@ -696,3 +696,59 @@ test('the demo declares that nothing is connected to a real system', async () =>
   const footer = await page.textContent('.footer');
   assert.match(footer, /No CNC, Dynamics 365, Bluestar/);
 });
+
+// ------------------------------------------------ theming and distribution ---
+
+test('an explicit data-theme overrides the operating-system preference both ways', async () => {
+  for (const scheme of ['light', 'dark']) {
+    const context = await browser.newContext({ colorScheme: scheme });
+    const page = await context.newPage();
+    await page.goto(URL_);
+    const card = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--card').trim());
+
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    assert.equal(await card(), '#18212e', `data-theme="dark" must win under a ${scheme} OS preference`);
+
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+    assert.equal(await card(), '#ffffff', `data-theme="light" must win under a ${scheme} OS preference`);
+
+    await context.close();
+  }
+});
+
+test('the standalone bundle is current and self-contained', async () => {
+  const { execSync } = await import('node:child_process');
+  const { readFileSync } = await import('node:fs');
+  const bundlePath = join(root, 'demo', 'standalone.html');
+
+  const before = readFileSync(bundlePath, 'utf8');
+  execSync('node scripts/build-standalone.mjs', { cwd: root, stdio: 'pipe' });
+  assert.equal(
+    readFileSync(bundlePath, 'utf8'),
+    before,
+    'demo/standalone.html is stale — run: node scripts/build-standalone.mjs',
+  );
+  assert.equal(
+    /<(link|script)[^>]+(href|src)=/.test(before),
+    false,
+    'the standalone bundle must have no external asset references',
+  );
+});
+
+test('the standalone bundle behaves identically to the multi-file demo', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`file://${join(root, 'demo', 'standalone.html')}`);
+  await page.evaluate(() => { window.MT_DEBUG.getState().config.running = false; });
+
+  assert.deepEqual(errors, []);
+  assert.equal((await page.$$('.machine')).length, 3);
+  assert.equal(await page.evaluate(() => window.DOWNTIME_REASONS.length), 11);
+  assert.match((await page.textContent('#panel .eta-range')).trim(), /–/);
+
+  await page.click('[data-role="leadership"]');
+  assert.ok((await page.$$('#shopAuditBody tbody tr')).length > 3);
+  await context.close();
+});

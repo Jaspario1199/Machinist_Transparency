@@ -26,6 +26,7 @@
   /* 5.6:1 on --soft, 6.0:1 on --card. The previous #66758a measured 4.45:1. */
   --muted: #4f5d70;
   --focus: #0b57d0;
+  --simbar-bg: #eef3f8;
   /* Solid button fills, kept separate from the accent colours used for TEXT.
      Each is verified against white at >=4.5:1 by the contrast test. */
   --blue-solid: #1257b0;
@@ -36,12 +37,21 @@
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
 }
 
+/*
+ * Dark theme, defined at token level only — components are styled through the
+ * tokens and never inside a media query, so both routes below stay in sync.
+ *
+ *   1. the operating-system preference, unless the viewer has pinned light;
+ *   2. an explicit data-theme="dark" on the root, which a host page or a
+ *      theme toggle can stamp and which must win over the OS preference.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --navy: #0d2740;
     --bg: #0f1620;
     --card: #18212e;
     --soft: #141c27;
+    --simbar-bg: #131c27;
     --border: #2c3948;
     --border-strong: #43536580;
     --text: #e9eef5;
@@ -57,6 +67,28 @@
     --green-solid: #1c7a37;
     --red-solid: #c0303c;
   }
+}
+
+:root[data-theme="dark"] {
+  --navy: #0d2740;
+  --bg: #0f1620;
+  --card: #18212e;
+  --soft: #141c27;
+  --simbar-bg: #131c27;
+  --border: #2c3948;
+  --border-strong: #43536580;
+  --text: #e9eef5;
+  --muted: #a7b6c8;
+  --blue: #4f9bff;
+  --green: #4cc46a;
+  --amber: #e0a83a;
+  --red: #ff7b7b;
+  --focus: #7fb0ff;
+  /* The dark accents above are tuned for TEXT on dark panels and are far too
+  light to carry white button labels, so solid fills stay dark here. */
+  --blue-solid: #2f6fd0;
+  --green-solid: #1c7a37;
+  --red-solid: #c0303c;
 }
 
 * { box-sizing: border-box; }
@@ -144,8 +176,7 @@ header { background: var(--navy); color: #fff; padding: 16px 24px; }
 
 /* --------------------------------------------------------- simulation bar */
 
-.simbar { background: #eef3f8; border-bottom: 1px solid var(--border); }
-@media (prefers-color-scheme: dark) { .simbar { background: #131c27; } }
+.simbar { background: var(--simbar-bg); border-bottom: 1px solid var(--border); }
 
 .simbar-inner {
   max-width: 1240px;

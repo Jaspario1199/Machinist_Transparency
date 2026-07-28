@@ -9,6 +9,21 @@ connection exists, at no OT risk.
 Open `index.html` in Chrome, Edge, Firefox or Safari. No install, server,
 database, machine or business-system access is required.
 
+### Sending it to someone
+
+`demo/standalone.html` is the whole application in **one file** — no folder, no
+server, no network. Attach it to a calendar invite, drop it on a shared drive,
+or open it from a USB stick on a shop terminal. Rebuild it after any change:
+
+```bash
+node scripts/build-standalone.mjs
+```
+
+`tests/demo.test.mjs` fails the build if it goes stale or stops being
+self-contained.
+
+### Local server
+
 A local server works too, and is preferable if you want the CSV export to behave
 exactly as it will in production:
 
@@ -109,6 +124,8 @@ is read as a commitment, and committed dates belong to Dynamics 365
   company sign-in.
 - The full normalised state model has nine states (`docs/02`); the demo exercises
   `PRODUCTION`, `SETUP`, `STOPPED`, `FAULT` and `READY`.
+- The page follows the viewer's light/dark preference, and a host page can pin
+  it with `data-theme="light"` or `data-theme="dark"` on the root element.
 - ETA modelling is simple: observed cycle median and spread, plus remaining
   setup. It has no operating calendar, shift pattern or labour availability.
 
@@ -124,6 +141,7 @@ demo/
   app/main.js                 wiring, dialogs, accessibility, export
   data/seed.js                simulated shop-floor seed data
   data/downtime-reasons.js    GENERATED from config/downtime-reasons.csv
+  standalone.html             GENERATED single-file build for sharing
 ```
 
 `data/downtime-reasons.js` must never be edited by hand. Change
