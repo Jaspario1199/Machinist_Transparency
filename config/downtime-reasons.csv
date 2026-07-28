@@ -1,0 +1,12 @@
+code,label,note_required,default_owner,definition
+SETUP,Setup or changeover,false,Manufacturing Engineering,"Fixture, tools, offsets, program or first article preparation"
+MATERIAL,Waiting for material,true,Materials,"Raw material, components, pallet, traveler or certification unavailable"
+INSPECTION,Waiting for inspection,true,Quality,"First article, in-process inspection or quality approval pending"
+TOOLING,Tooling issue,true,Manufacturing Engineering,"Missing, broken, worn or unprepared tool"
+MACHINE_FAULT,Machine fault,true,Maintenance,"CNC, spindle, axis, hydraulic, pneumatic, door or approved machine alarm"
+CHIPS_COOLANT,Chips or coolant,true,Production Supervisor,"Chip clearing, coolant fill, washdown or contaminated fixture"
+ENGINEERING,Engineering or program question,true,Manufacturing Engineering,"Drawing, program, fixture or process clarification"
+WAITING_OPERATOR,Waiting for operator,true,Production Supervisor,"Machine ready but no qualified operator available"
+NO_WORK,No scheduled work,false,Planning,"No released job assigned"
+PLANNED_MAINT,Planned maintenance,false,Maintenance,"Scheduled maintenance, inspection or service"
+OTHER,Other,true,Production Supervisor,"Requires short note and later reason-tree review"
