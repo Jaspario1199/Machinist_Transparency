@@ -1,0 +1,26 @@
+machine_id: CNC-MILL-EXAMPLE
+name: Example Mill
+site: Rochester Sensors
+area: Machine Shop
+collector_type: mtconnect
+endpoint: http://replace-with-approved-host:5000
+read_only: true
+timezone: America/Chicago
+
+downtime_prompt_seconds: 180
+
+mappings:
+  availability.AVAILABLE: READY
+  availability.UNAVAILABLE: UNAVAILABLE
+  execution.ACTIVE: PRODUCTION
+  execution.STOPPED: STOPPED
+  controller_mode.MANUAL: SETUP
+
+metadata:
+  manufacturer: REPLACE
+  model: REPLACE
+  controller: REPLACE
+  controller_version: REPLACE
+  year: null
+
+# Never commit production credentials or private machine addresses.
