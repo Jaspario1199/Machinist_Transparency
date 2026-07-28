@@ -43,6 +43,9 @@ Only the selected machine's requests, downtime buttons and activity log are disp
 - Select a machine.
 - Approve, reject, defer or reposition a queue-change request.
 - Classify a stopped machine with one large reason button.
+- Confirm setup complete, stop, resume, or load the next queued job — the
+  machine must never reach a state with no way forward.
+- Acknowledge and close blockers.
 - Review the active job, executable queue and FS1 location.
 
 ### PM / Engineer
@@ -66,4 +69,24 @@ Only the selected machine's requests, downtime buttons and activity log are disp
 - No mandatory notes for normal approval or downtime classification.
 - Routine production needs no repeated manual updates.
 - A request approved for after the current job must not alter the queue until that job completes.
-- All request and exception decisions remain attributable in the audit history.
+- All request and exception decisions remain attributable in the audit history,
+  with a named actor and a timestamp.
+- Re-rendering must preserve what the user expanded and where keyboard focus
+  sits. Live telemetry updates the page roughly once a second; it must never
+  collapse a section someone is reading or drop focus.
+- Interactive targets are at least 44px tall. The approve and reject controls
+  are among the largest on the page, never the smallest.
+- Secondary text meets WCAG 2.2 AA contrast in both light and dark schemes.
+- Destructive controls confirm before discarding state.
+
+## Accessibility contract
+
+- Role switching uses `tablist`/`tab` semantics with arrow-key navigation and
+  roving tabindex.
+- Machine selection is exposed through `aria-pressed`, never colour alone.
+- Progress is exposed as `role="progressbar"` with values and a label.
+- Dialogs are native `<dialog>` elements opened with `showModal()`, so focus
+  trapping, Escape handling, background inertness and focus restoration come
+  from the platform rather than a partial reimplementation.
+- Status messages are announced through a polite live region.
+- A skip link reaches the machine workspace directly.

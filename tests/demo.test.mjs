@@ -1,0 +1,698 @@
+/**
+ * Browser tests for the simulated beta.
+ *
+ * Every test here corresponds to a behaviour the design documents require or a
+ * defect found in review. The suite is deliberately behavioural rather than
+ * unit-level: the failures that mattered were all reachable by clicking.
+ *
+ * Run: node --test tests/
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { execSync } from 'node:child_process';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const URL_ = `file://${join(root, 'demo', 'index.html')}`;
+
+/** Resolve playwright from the local install or the global one. */
+function loadPlaywright() {
+  const require_ = createRequire(import.meta.url);
+  try {
+    return require_('playwright');
+  } catch {
+    const globalRoot = execSync('npm root -g', { encoding: 'utf8' }).trim();
+    return createRequire(join(globalRoot, 'x.js'))('playwright');
+  }
+}
+
+const { chromium } = loadPlaywright();
+let browser;
+
+test.before(async () => { browser = await chromium.launch(); });
+test.after(async () => { await browser?.close(); });
+
+/** Fresh page with telemetry paused, so assertions are deterministic. */
+async function open({ width = 1280, height = 1000 } = {}) {
+  const context = await browser.newContext({ viewport: { width, height } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto(URL_);
+  await page.evaluate(() => { window.MT_DEBUG.getState().config.running = false; });
+  page.errors = errors;
+  return page;
+}
+
+const openSections = (page) => page.evaluate(() => {
+  document.querySelectorAll('#panel details').forEach((d) => { d.open = true; });
+});
+
+const getState = (page) => page.evaluate(() => window.MT_DEBUG.getState());
+
+// ------------------------------------------------------------ ETA policy ---
+
+test('active-job ETA is a range with confidence and a leading risk, never a bare number', async () => {
+  const page = await open();
+  const range = (await page.textContent('#panel .eta-range')).trim();
+  const detail = (await page.textContent('#panel .eta-detail')).trim();
+  const risk = (await page.textContent('#panel .eta-risk')).trim();
+
+  assert.match(range, /–/, `expected a range, got "${range}"`);
+  assert.match(detail, /confidence/i, 'ETA must state its confidence');
+  assert.match(risk, /Leading risk:/, 'ETA must state the leading risk');
+  assert.match(await page.textContent('#panel .advisory'), /Advisory range/i);
+  assert.deepEqual(page.errors, []);
+});
+
+test('a blocked machine produces no ETA at all', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  const range = (await page.textContent('#panel .eta-range')).trim();
+  assert.equal(range, 'Not projectable');
+  assert.doesNotMatch(range, /\d/, 'a stopped machine must not display a numeric ETA');
+});
+
+// ----------------------------------------------------- machine lifecycle ---
+
+test('a machine in SETUP can be started without faking a stoppage', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-2"]');
+  assert.ok(await page.$('[data-act="complete-setup"]'), 'SETUP must offer a "setup complete" action');
+  await page.click('[data-act="complete-setup"]');
+  const state = await getState(page);
+  assert.equal(state.machines.find((m) => m.id === 'cnc-2').state, 'PRODUCTION');
+  assert.ok(state.audit.some((a) => a.event === 'SETUP_COMPLETED'), 'setup completion must be audited');
+});
+
+test('a machine with an empty queue can start the next job and is never a dead end', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[0];
+    m.state = 'READY';
+    m.active.done = m.active.qty;
+    window.MT_DEBUG.setState(s);
+  });
+  assert.ok(await page.$('[data-act="start-next"]'), 'READY must offer a way to load the next job');
+  await page.click('[data-act="start-next"]');
+  const state = await getState(page);
+  assert.equal(state.machines[0].state, 'SETUP', 'starting the next job enters setup');
+});
+
+// -------------------------------------------------------- queue governance ---
+
+test('approving a request whose work order left the queue fails loudly and stays PENDING', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines.find((x) => x.id === 'cnc-1');
+    m.queue = m.queue.filter((q) => q.wo !== 'WO-20492'); // it was promoted to active
+    window.MT_DEBUG.setState(s);
+  });
+  await openSections(page);
+  await page.click('.decision[data-action="approve"]');
+
+  const toast = (await page.textContent('#toast')).trim();
+  assert.match(toast, /no longer in this machine's queue/i, `expected a failure message, got "${toast}"`);
+  assert.equal(await page.getAttribute('#toast', 'class'), 'toast bad');
+
+  const state = await getState(page);
+  assert.equal(state.requests[0].status, 'PENDING', 'a failed approval must not be recorded as approved');
+  assert.ok(state.audit.some((a) => a.event === 'REQUEST_DECISION_FAILED'), 'the failure must be audited');
+});
+
+test('approval reorders the queue and records before/after plus ETA impact', async () => {
+  const page = await open();
+  await openSections(page);
+  const before = (await getState(page)).machines.find((m) => m.id === 'cnc-1').queue.map((q) => q.wo);
+  await page.click('.decision[data-action="approve"]');
+
+  const state = await getState(page);
+  const after = state.machines.find((m) => m.id === 'cnc-1').queue.map((q) => q.wo);
+  assert.equal(after[0], 'WO-20492', 'the approved job must move to position 1');
+  assert.notDeepEqual(before, after);
+
+  const entry = state.audit.find((a) => a.event === 'REQUEST_APPROVED');
+  assert.ok(entry, 'approval must be audited');
+  assert.deepEqual(entry.before, before);
+  assert.deepEqual(entry.after, after);
+  assert.ok(entry.actor && entry.role, 'audit rows must name a person and a role');
+  assert.equal(typeof entry.etaImpactMin, 'number', 'audit must record the ETA impact');
+});
+
+test('"approve after current job" leaves the queue untouched and is visibly not in effect', async () => {
+  const page = await open();
+  await openSections(page);
+  const before = (await getState(page)).machines.find((m) => m.id === 'cnc-1').queue.map((q) => q.wo);
+  await page.click('.decision[data-action="defer"]');
+
+  const state = await getState(page);
+  const after = state.machines.find((m) => m.id === 'cnc-1').queue.map((q) => q.wo);
+  assert.deepEqual(after, before, 'a deferred approval must not move the queue yet');
+
+  const badgeClass = await page.getAttribute('#panel .request .badge', 'class');
+  assert.doesNotMatch(badgeClass, /production/, 'deferred must not be styled as an applied change');
+  assert.match(badgeClass, /deferred/);
+  assert.match(await page.textContent('#panel .request'), /not yet in effect/i);
+
+  await page.click('[data-role="leadership"]');
+  const metrics = await page.$$eval('.metric', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
+  assert.ok(
+    metrics.includes('Approved,notyetineffect1'),
+    `leadership must surface in-flight changes, got ${JSON.stringify(metrics)}`,
+  );
+});
+
+test('a deferred approval is applied when the job completes', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('.decision[data-action="defer"]');
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines.find((x) => x.id === 'cnc-1');
+    m.active.done = m.active.qty - 1;
+    window.MT_DEBUG.setState(s);
+    window.MT_DEBUG.tick(60);
+  });
+  const state = await getState(page);
+  const request = state.requests.find((r) => r.id === 1);
+  assert.equal(request.status, 'APPROVED');
+  assert.ok(state.audit.some((a) => a.event === 'REQUEST_DEFERRED_APPLIED'));
+});
+
+test('rejection captures a reason from the agreed list', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('.decision[data-action="reject"]');
+  await page.waitForSelector('#promptDialog[open]');
+  await page.selectOption('#promptFields select', 'Fixture/tooling conflict');
+  await page.click('#promptConfirm');
+
+  const state = await getState(page);
+  assert.equal(state.requests[0].status, 'REJECTED');
+  assert.equal(state.requests[0].decision.rejectionReason, 'Fixture/tooling conflict');
+  assert.ok(state.audit.some((a) => a.event === 'REQUEST_REJECTED' && /Fixture/.test(a.summary)));
+});
+
+test('the machinist can counter-propose a different position', async () => {
+  const page = await open();
+  await openSections(page);
+  assert.ok(await page.$('.decision[data-action="counter"]'), '"propose another position" must exist');
+  await page.click('.decision[data-action="counter"]');
+  await page.waitForSelector('#promptDialog[open]');
+  // The request asked for position 1; the machinist can only take it third.
+  await page.selectOption('#promptFields select', '3');
+  await page.click('#promptConfirm');
+
+  const state = await getState(page);
+  assert.equal(state.requests[0].status, 'APPROVED_REPOSITIONED');
+  assert.equal(state.machines.find((m) => m.id === 'cnc-1').queue[2].wo, 'WO-20492');
+  const entry = state.audit.find((a) => a.event === 'REQUEST_COUNTERED');
+  assert.ok(entry, 'a counter-proposal must be audited');
+  assert.match(entry.summary, /instead of the requested 1/);
+});
+
+test('requesters cannot reorder the queue directly from any read-only role', async () => {
+  const page = await open();
+  for (const role of ['engineer', 'leadership']) {
+    await page.click(`[data-role="${role}"]`);
+    const controls = await page.$$('.decision');
+    assert.equal(controls.length, 0, `${role} must not see machinist decision controls`);
+  }
+  const before = (await getState(page)).machines.find((m) => m.id === 'cnc-1').queue.map((q) => q.wo);
+
+  await page.click('[data-act="request"]');
+  await page.waitForSelector('#requestDialog[open]');
+  await page.selectOption('#requestJob', 'WO-20517');
+  await page.selectOption('#requestPosition', '1');
+  await page.fill('#requestNote', 'Customer called about this one');
+  await page.click('#requestSubmit');
+
+  const state = await getState(page);
+  const after = state.machines.find((m) => m.id === 'cnc-1').queue.map((q) => q.wo);
+  assert.deepEqual(after, before, 'submitting a request must never change the queue');
+  assert.equal(state.requests.at(-1).status, 'PENDING');
+  assert.ok(state.audit.some((a) => a.event === 'REQUEST_SUBMITTED' && a.before));
+});
+
+test('a request records urgency, desired timing and the note, and the note is shown', async () => {
+  const page = await open();
+  await page.click('[data-role="engineer"]');
+  await page.click('[data-act="request"]');
+  await page.waitForSelector('#requestDialog[open]');
+  await page.selectOption('#requestJob', 'WO-20517');
+  await page.selectOption('#requestUrgency', 'HIGH');
+  await page.selectOption('#requestTiming', 'AFTER_CYCLE');
+  await page.fill('#requestNote', 'NOTE-MUST-BE-VISIBLE');
+  await page.click('#requestSubmit');
+
+  const request = (await getState(page)).requests.at(-1);
+  assert.equal(request.urgency, 'HIGH');
+  assert.equal(request.timing, 'AFTER_CYCLE');
+  assert.equal(request.note, 'NOTE-MUST-BE-VISIBLE');
+
+  await openSections(page);
+  assert.match(await page.textContent('#panel'), /NOTE-MUST-BE-VISIBLE/, 'the note must be rendered, not swallowed');
+});
+
+test('a machine with no queued work explains itself instead of offering a dead button', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.machines.find((m) => m.id === 'cnc-1').queue = [];
+    window.MT_DEBUG.setState(s);
+  });
+  await page.click('[data-role="engineer"]');
+  await page.click('[data-act="request"]');
+  await page.waitForSelector('#requestDialog[open]');
+  assert.equal(await page.isVisible('#requestNoQueue'), true);
+  assert.match(await page.textContent('#requestNoQueue'), /no queued work/i);
+  assert.equal(await page.isDisabled('#requestSubmit'), true);
+});
+
+// ------------------------------------------------- downtime and blockers ---
+
+test('the reason list comes from config and shows the responsible group', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await openSections(page);
+  const configured = await page.evaluate(() => window.DOWNTIME_REASONS.map((r) => r.code));
+  const rendered = await page.$$eval('.reason', (els) => els.map((e) => e.dataset.reason));
+  assert.deepEqual(rendered, configured, 'the demo must render exactly the configured reason tree');
+  assert.match(await page.textContent('.reason'), /Manufacturing Engineering|Materials|Quality|Maintenance|Planning|Production Supervisor/);
+});
+
+test('reasons flagged note_required actually demand a note', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await openSections(page);
+  await page.click('.reason[data-reason="MATERIAL"]'); // note_required = true
+  await page.waitForSelector('#promptDialog[open]');
+  assert.match(await page.textContent('#promptDescription'), /Materials/);
+  await page.fill('#promptFields textarea', 'Bar stock still in receiving');
+  await page.click('#promptConfirm');
+
+  const state = await getState(page);
+  const machine = state.machines.find((m) => m.id === 'cnc-3');
+  assert.equal(machine.downtime.code, 'MATERIAL');
+  assert.equal(machine.downtime.note, 'Bar stock still in receiving');
+});
+
+test('classifying downtime opens a blocker owned by the configured group', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await openSections(page);
+  await page.click('.reason[data-reason="MACHINE_FAULT"]');
+  await page.waitForSelector('#promptDialog[open]');
+  await page.fill('#promptFields textarea', 'Spindle alarm');
+  await page.click('#promptConfirm');
+
+  const state = await getState(page);
+  const blocker = state.blockers.at(-1);
+  assert.equal(blocker.code, 'MACHINE_FAULT');
+  assert.equal(blocker.owner, 'Maintenance', 'the blocker must route to the owner defined in the CSV');
+  assert.equal(blocker.status, 'OPEN');
+  assert.ok(state.audit.some((a) => a.event === 'BLOCKER_OPENED'));
+});
+
+test('a classified stoppage survives the machine resuming', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await openSections(page);
+  await page.click('.reason[data-reason="TOOLING"]');
+  await page.waitForSelector('#promptDialog[open]');
+  await page.fill('#promptFields textarea', 'Insert change');
+  await page.click('#promptConfirm');
+  await page.click('[data-act="resume"]');
+
+  const machine = (await getState(page)).machines.find((m) => m.id === 'cnc-3');
+  const recorded = machine.history.downtimes.find((d) => d.note === 'Insert change');
+  assert.ok(recorded, 'the downtime interval must be kept in history after resuming');
+  assert.equal(recorded.code, 'TOOLING');
+  assert.ok(recorded.endedAt > recorded.startedAt);
+});
+
+test('short stops below the threshold are not chased for a reason', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.config.downtimePromptSeconds = 600;
+    const m = s.machines.find((x) => x.id === 'cnc-1');
+    m.state = 'STOPPED';
+    m.stateSince = Date.now() - 5000;
+    m.downtime = null;
+    m.promptedAt = null;
+    window.MT_DEBUG.setState(s);
+  });
+  await openSections(page);
+  const body = await page.textContent('#panel');
+  assert.match(body, /No reason is requested until 600s/);
+  assert.equal((await page.$$('.reason')).length, 0, 'no prompt should appear below the threshold');
+});
+
+test('blockers can be acknowledged and closed, and both are audited', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('.blocker-action[data-status="ACKNOWLEDGED"], .blocker-action[data-status="CLOSED"]');
+  const state = await getState(page);
+  assert.ok(state.audit.some((a) => /BLOCKER_(ACKNOWLEDGED|CLOSED)/.test(a.event)));
+});
+
+// -------------------------------------------------------------- audit log ---
+
+test('the leadership view exposes a shop-wide, attributable audit trail', async () => {
+  const page = await open();
+  await page.click('[data-role="leadership"]');
+  assert.equal(await page.isVisible('#shopAudit'), true);
+  const headers = await page.$$eval('#shopAuditBody th', (els) => els.map((e) => e.textContent.trim()));
+  for (const required of ['Time', 'Actor', 'Event', 'Work order', 'Queue before → after', 'ETA impact']) {
+    assert.ok(headers.includes(required), `audit table is missing the "${required}" column`);
+  }
+  assert.ok((await page.$$('#shopAuditBody tbody tr')).length > 3, 'the shift should open with visible history');
+});
+
+test('every audit row carries a timestamp and a named actor', async () => {
+  const page = await open();
+  const audit = (await getState(page)).audit;
+  assert.ok(audit.length > 0);
+  for (const row of audit) {
+    assert.equal(typeof row.at, 'number', 'audit row without a timestamp');
+    assert.ok(row.actor, 'audit row without an actor');
+    assert.ok(row.role, 'audit row without a role');
+  }
+});
+
+// ------------------------------------------------------------- analytics ---
+
+test('the engineering view provides real process analytics, not the machinist panel', async () => {
+  const page = await open();
+  await page.click('[data-role="engineer"]');
+  await openSections(page);
+  const body = await page.textContent('#panel');
+  for (const required of ['Cycle-time distribution', 'Downtime Pareto', 'Setup history', 'Machine-tending candidate', 'Spindle utilisation', 'Actual vs standard cycle', 'Operator interventions']) {
+    assert.match(body, new RegExp(required, 'i'), `engineering view is missing "${required}"`);
+  }
+  assert.ok((await page.$$('.pareto-row')).length > 0, 'Pareto must render rows');
+  assert.ok((await page.$$('.hbar')).length > 0, 'cycle histogram must render bars');
+});
+
+test('leadership sees due-date risk, blocker owners and requested priority', async () => {
+  const page = await open();
+  await page.click('[data-role="leadership"]');
+  await openSections(page);
+  const body = await page.textContent('#panel');
+  assert.match(body, /Due-date risk/);
+  assert.match(body, /Requested priority/);
+  assert.match(body, /owner:/);
+});
+
+// --------------------------------------------------------- live telemetry ---
+
+test('the board advances on its own without anyone clicking', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const page = await context.newPage();
+  await page.goto(URL_);
+  await page.evaluate(() => { window.MT_DEBUG.getState().config.simSpeed = 15; });
+  const before = await page.evaluate(() => window.MT_DEBUG.getState().machines[0].active.done);
+  await page.waitForTimeout(3500);
+  const after = await page.evaluate(() => window.MT_DEBUG.getState().machines[0].active.done);
+  assert.ok(after > before, `production must advance from telemetry alone (${before} → ${after})`);
+  await context.close();
+});
+
+test('collector health is surfaced and degrades when the collector drops', async () => {
+  const page = await open();
+  assert.match(await page.textContent('#panel .health'), /Live/);
+  await page.click('#collectorToggle');
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.machines.find((m) => m.id === 'cnc-1').collector.lastEventAt = Date.now() - 60000;
+    window.MT_DEBUG.setState(s);
+  });
+  const health = await page.textContent('#panel .health');
+  assert.match(health, /No data for/, 'a dropped collector must be visible, not silent');
+});
+
+// ------------------------------------------------ rendering / interaction ---
+
+test('a re-render preserves expanded sections and keyboard focus', async () => {
+  const page = await open();
+  await page.click('#panel details[data-section^="m-audit"] summary');
+  await page.focus('[data-focus-key="stop"]');
+  const openedBefore = await page.$$eval('#panel details', (els) => els.map((d) => d.open));
+
+  await page.evaluate(() => window.MT_DEBUG.tick(1));
+
+  const openedAfter = await page.$$eval('#panel details', (els) => els.map((d) => d.open));
+  assert.deepEqual(openedAfter, openedBefore, 'a telemetry tick must not collapse what the user opened');
+  const focused = await page.evaluate(() => document.activeElement?.dataset?.focusKey ?? null);
+  assert.equal(focused, 'stop', 'focus must survive a re-render');
+});
+
+test('user-supplied text is escaped, not executed', async () => {
+  const page = await open();
+  await page.click('[data-role="engineer"]');
+  await page.click('[data-act="request"]');
+  await page.waitForSelector('#requestDialog[open]');
+  await page.fill('#requestNote', '<img src=x onerror="window.__XSS=1"><b>bold</b>');
+  await page.click('#requestSubmit');
+  await openSections(page);
+  await page.click('[data-role="machinist"]');
+  await openSections(page);
+
+  assert.equal(await page.evaluate(() => window.__XSS), undefined, 'injected markup must not execute');
+  assert.equal(await page.$$eval('#panel .note b', (e) => e.length), 0, 'markup must render as text');
+  assert.match(await page.textContent('#panel .note'), /<b>bold<\/b>/);
+});
+
+test('reset requires confirmation before discarding the audit trail', async () => {
+  const page = await open();
+  await page.click('#resetButton');
+  await page.waitForSelector('#promptDialog[open]');
+  assert.match(await page.textContent('#promptDescription'), /discards/i);
+  await page.click('#promptCancel');
+  assert.ok((await getState(page)).audit.length > 0, 'cancelling must not wipe state');
+});
+
+test('the audit trail exports as CSV', async () => {
+  const page = await open();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#exportButton'),
+  ]);
+  assert.match(download.suggestedFilename(), /machinist-transparency-audit-.*\.csv/);
+});
+
+// ---------------------------------------------------------- accessibility ---
+
+test('role switching uses real tab semantics with arrow-key navigation', async () => {
+  const page = await open();
+  assert.ok(await page.$('[role="tablist"]'));
+  assert.equal(await page.getAttribute('#tab-machinist', 'aria-selected'), 'true');
+  await page.focus('#tab-machinist');
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.getAttribute('#tab-engineer', 'aria-selected'), 'true');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-engineer');
+});
+
+test('machine selection is exposed to assistive technology, not colour alone', async () => {
+  const page = await open();
+  const pressed = await page.$$eval('.machine', (els) => els.map((e) => e.getAttribute('aria-pressed')));
+  assert.deepEqual(pressed, ['true', 'false', 'false']);
+  await page.click('.machine[data-machine="cnc-2"]');
+  assert.deepEqual(
+    await page.$$eval('.machine', (els) => els.map((e) => e.getAttribute('aria-pressed'))),
+    ['false', 'true', 'false'],
+  );
+});
+
+test('progress is exposed as a progressbar with values', async () => {
+  const page = await open();
+  const bars = await page.$$eval('[role="progressbar"]', (els) => els.map((e) => ({
+    now: e.getAttribute('aria-valuenow'),
+    label: e.getAttribute('aria-label'),
+  })));
+  assert.ok(bars.length >= 3);
+  for (const bar of bars) {
+    assert.ok(Number.isFinite(Number(bar.now)));
+    assert.ok(bar.label);
+  }
+});
+
+test('the toast is a live region so decisions are announced', async () => {
+  const page = await open();
+  assert.equal(await page.getAttribute('#toast', 'role'), 'status');
+  assert.equal(await page.getAttribute('#toast', 'aria-live'), 'polite');
+});
+
+test('dialogs are labelled and take focus, and the background is inert', async () => {
+  const page = await open();
+  await page.click('[data-role="engineer"]');
+  await page.click('[data-act="request"]');
+  await page.waitForSelector('#requestDialog[open]');
+
+  assert.equal(await page.getAttribute('#requestDialog', 'aria-labelledby'), 'requestDialogTitle');
+  assert.equal(await page.evaluate(() => document.getElementById('requestDialog').contains(document.activeElement)), true);
+  // showModal() makes everything outside the dialog inert; verify a background
+  // control genuinely cannot be reached.
+  assert.equal(
+    await page.evaluate(() => {
+      const tab = document.getElementById('tab-machinist');
+      tab.focus();
+      return document.activeElement === tab;
+    }),
+    false,
+    'background controls must be unreachable while a modal is open',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('requestDialog').open);
+});
+
+test('there is a skip link to the workspace', async () => {
+  const page = await open();
+  assert.ok(await page.$('.skip-link'));
+});
+
+/**
+ * Measures each piece of secondary text against the background actually painted
+ * behind it, rather than an assumed white, and does so in both colour schemes.
+ */
+async function contrastFailures(page) {
+  return page.evaluate(() => {
+    const luminance = (rgb) => {
+      const [r, g, b] = rgb.map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    /**
+     * Accepts both `rgb(0-255 …)` and the `color(srgb 0-1 …)` form that
+     * color-mix() resolves to, which are numerically incompatible.
+     */
+    const parse = (s) => {
+      const nums = s.match(/[\d.]+/g).slice(0, 3).map(Number);
+      return s.startsWith('color(') ? nums.map((n) => n * 255) : nums;
+    };
+    const opaque = (s) => s && s !== 'transparent' && !/[\s,]0(\.0+)?\)$/.test(s);
+
+    const effectiveBackground = (el) => {
+      let node = el;
+      while (node && node !== document.documentElement) {
+        const bg = getComputedStyle(node).backgroundColor;
+        if (opaque(bg)) return bg;
+        node = node.parentElement;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+
+    const ratio = (fg, bg) => {
+      const a = luminance(parse(fg));
+      const b = luminance(parse(bg));
+      const [hi, lo] = a > b ? [a, b] : [b, a];
+      return (hi + 0.05) / (lo + 0.05);
+    };
+
+    const failures = [];
+    document.querySelectorAll('.muted, .small, .label, .advisory, .eta-basis, .reason-owner').forEach((el) => {
+      if (!el.textContent.trim() || !el.getClientRects().length) return;
+      const style = getComputedStyle(el);
+      const size = parseFloat(style.fontSize);
+      const bold = Number(style.fontWeight) >= 700;
+      // WCAG AA: 3:1 for large text (>=24px, or >=18.66px bold), else 4.5:1.
+      const required = size >= 24 || (bold && size >= 18.66) ? 3 : 4.5;
+      const measured = ratio(style.color, effectiveBackground(el));
+      if (measured < required) {
+        failures.push({
+          text: el.textContent.trim().slice(0, 40),
+          className: el.className,
+          measured: Number(measured.toFixed(2)),
+          required,
+        });
+      }
+    });
+    return failures;
+  });
+}
+
+test('secondary text meets WCAG AA contrast in light mode', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light' });
+  const page = await context.newPage();
+  await page.goto(URL_);
+  await page.click('[data-role="leadership"]');
+  const failures = await contrastFailures(page);
+  assert.deepEqual(failures, [], `low-contrast text: ${JSON.stringify(failures, null, 2)}`);
+  await context.close();
+});
+
+test('secondary text meets WCAG AA contrast in dark mode', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, colorScheme: 'dark' });
+  const page = await context.newPage();
+  await page.goto(URL_);
+  await page.click('[data-role="leadership"]');
+  const failures = await contrastFailures(page);
+  assert.deepEqual(failures, [], `low-contrast text: ${JSON.stringify(failures, null, 2)}`);
+  await context.close();
+});
+
+test('shop-floor controls meet a 44px touch target, decisions included', async () => {
+  const page = await open();
+  await openSections(page);
+  const measure = (selector) => page.$$eval(selector, (els) => els.map((e) => {
+    const r = e.getBoundingClientRect();
+    return { text: e.textContent.trim().slice(0, 32), h: Math.round(r.height) };
+  }));
+
+  for (const [selector, min] of [['.decision', 44], ['[data-act]', 44], ['.machine', 44]]) {
+    const items = await measure(selector);
+    assert.ok(items.length > 0, `no elements matched ${selector}`);
+    for (const item of items) {
+      assert.ok(item.h >= min, `${selector} "${item.text}" is only ${item.h}px tall (need ${min}px)`);
+    }
+  }
+
+  await page.click('.machine[data-machine="cnc-3"]');
+  await openSections(page);
+  for (const item of await measure('.reason')) {
+    assert.ok(item.h >= 60, `downtime reason "${item.text}" is only ${item.h}px tall`);
+  }
+});
+
+test('destructive simulation controls are not the largest thing on the page', async () => {
+  const page = await open();
+  await openSections(page);
+  const reset = await page.$eval('#resetButton', (e) => e.getBoundingClientRect().height);
+  const approve = await page.$eval('.decision[data-action="approve"]', (e) => e.getBoundingClientRect().height);
+  assert.ok(approve >= reset, 'the approval control must be at least as prominent as Reset');
+});
+
+// ---------------------------------------------------------------- layout ---
+
+test('on a tablet the workspace is reachable without scrolling past the picker', async () => {
+  const page = await open({ width: 820, height: 1180 });
+  const top = await page.evaluate(() => Math.round(document.getElementById('panel').getBoundingClientRect().top));
+  assert.ok(top < 700, `the machine workspace starts at y=${top}; it must stay near the fold on a tablet`);
+});
+
+test('the page never scrolls horizontally', async () => {
+  for (const width of [1280, 820, 390]) {
+    const page = await open({ width, height: 900 });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert.ok(overflow <= 1, `horizontal overflow of ${overflow}px at ${width}px wide`);
+  }
+});
+
+test('the page states that it measures processes rather than operators', async () => {
+  const page = await open();
+  assert.match(await page.textContent('header'), /not.*individual operator performance/is);
+});
+
+test('the demo declares that nothing is connected to a real system', async () => {
+  const page = await open();
+  const footer = await page.textContent('.footer');
+  assert.match(footer, /No CNC, Dynamics 365, Bluestar/);
+});
