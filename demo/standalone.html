@@ -8,42 +8,105 @@
 <meta name="description" content="Simulated CNC visibility and controlled queue-change beta. No machine, database or business-system connection.">
 <style>
 /*
- * Machinist Transparency — simulated beta stylesheet.
+ * ============================================================================
+ * BRAND THEME — this is the only file you edit to re-skin the application.
+ * ============================================================================
  *
- * Shop-floor constraints this file is written against:
- *   - Minimum 44px interactive height. A gloved hand on a wall terminal cannot
- *     reliably hit a 32px button, and the approve/reject decision is the most
- *     important control on the page — so it is also the largest.
- *   - Secondary text meets WCAG AA (4.5:1) on every background it is used on.
- *   - The machine picker must not consume a whole tablet screen; below 900px it
- *     becomes a compact horizontal strip so the workspace stays above the fold.
+ * Every colour, typeface and shape decision lives here as a custom property.
+ * app.css contains no colour literals at all, so nothing in the component
+ * styles has to be touched to match a corporate identity. A test enforces that.
+ *
+ * To apply the Rochester Sensors / Bluestar identity, replace the values in the
+ * "BRAND" block below and, if the corporate typeface is licensed for this use,
+ * the font stack. Everything else — state colours, spacing, contrast handling —
+ * is derived and should not need changing.
+ *
+ * Two rules that must survive any re-skin:
+ *
+ *   1. Secondary text must keep 4.5:1 contrast against the surface behind it,
+ *      and solid buttons must keep 4.5:1 against white label text, in BOTH
+ *      colour schemes. `npm test` checks this and will fail the build if a new
+ *      palette breaks it. That is deliberate — a shop terminal in bright light
+ *      is the worst-case reading environment there is.
+ *   2. Do not link a webfont from a CDN. The demo has to work from a file on a
+ *      USB stick with no network. Self-host, or embed as a data URI below.
  */
 
 :root {
-  --navy: #123b5d;
-  --blue: #1257b0;
-  --blue-bright: #1f6feb;
+  /* ---------------------------------------------------------------- BRAND --
+   * Replace these with the corporate palette. --brand is the header and the
+   * primary identity colour; --accent drives interactive elements.
+   */
+  --brand: #123b5d;              /* header band, primary identity            */
+  --accent: #1257b0;             /* links, selection, active states          */
+  --accent-solid: #1257b0;       /* filled buttons — needs 4.5:1 with white  */
+
+  /* On-brand text: everything that sits on top of --brand. */
+  --on-brand: #ffffff;
+  --on-brand-soft: #cfe0f0;      /* tagline                                  */
+  --on-brand-body: #e6f0f9;      /* the promise statement                    */
+  --on-brand-muted: #c3d6e8;     /* "signed in as"                           */
+  --on-brand-veil: #ffffff1f;    /* translucent panel on the header band     */
+  --on-brand-rule: #7fb6e8;      /* accent rule on the header band           */
+  --on-brand-border: #ffffff8c;  /* outline buttons on the header band       */
+
+  /* ------------------------------------------------------------ TYPEFACE --
+   * No CDN links — the page must render from file:// with no network.
+   * To use a licensed corporate face, self-host it or inline it here:
+   *
+   *   @font-face { font-family: "Corporate"; src: url(data:font/woff2;base64,…) }
+   *
+   * then put it at the front of --font-body.
+   */
+  --font-body: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* --------------------------------------------------------------- SHAPE -- */
+  --radius: 12px;
+  --radius-sm: 10px;
+  --radius-lg: 14px;
+  --tap: 44px;                   /* minimum touch target — see app.css notes */
+  --shadow: 0 8px 28px #0b142033;
+
+  /* ---------------------------------------------------------- STATE HUES --
+   * Semantic, not brand. Green/amber/red carry meaning on the shop floor and
+   * should stay recognisably green/amber/red even under a rebrand.
+   * The *-solid variants are the fills that carry white label text.
+   */
   --green: #14692c;
   --amber: #7a5200;
   --red: #b3202c;
+  --green-solid: #14692c;
+  --red-solid: #b3202c;
+
+  /* ------------------------------------------------------------ SURFACES -- */
   --bg: #f3f6f9;
   --card: #ffffff;
   --soft: #f7f9fc;
+  --simbar-bg: #eef3f8;
   --border: #d0dae5;
   --border-strong: #a9b8c9;
   --text: #16202f;
-  /* 5.6:1 on --soft, 6.0:1 on --card. The previous #66758a measured 4.45:1. */
-  --muted: #4f5d70;
+  --muted: #4f5d70;              /* 6.0:1 on --card, 5.6:1 on --soft         */
   --focus: #0b57d0;
-  --simbar-bg: #eef3f8;
-  /* Solid button fills, kept separate from the accent colours used for TEXT.
-     Each is verified against white at >=4.5:1 by the contrast test. */
-  --blue-solid: #1257b0;
-  --green-solid: #14692c;
-  --red-solid: #b3202c;
-  --radius: 12px;
-  --tap: 44px;
-  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  --backdrop: #0b1420cc;
+  --toast-bg: #16202f;
+  --toast-fg: #ffffff;
+  --skip-bg: #ffffff;
+  --skip-fg: #123b5d;
+
+  /* --------------------------------------------------------------- LOGO --
+   * Drop the corporate mark in as a data URI and it appears in the header:
+   *   --brand-logo: url("data:image/svg+xml;base64,…");
+   * Left as `none`, the header shows the wordmark alone.
+   */
+  --brand-logo: none;
+  --brand-logo-width: 132px;
+  /* Set to `block` at the same time as --brand-logo to reveal the mark. */
+  --brand-logo-display: none;
+
+  font-family: var(--font-body);
 }
 
 /*
@@ -56,7 +119,13 @@
  */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --navy: #0d2740;
+    --brand: #0d2740;
+    --accent: #4f9bff;
+    --accent-solid: #2f6fd0;
+    --on-brand-soft: #b9d2e8;
+    --on-brand-body: #e6f0f9;
+    --on-brand-muted: #b9cee0;
+
     --bg: #0f1620;
     --card: #18212e;
     --soft: #141c27;
@@ -65,21 +134,28 @@
     --border-strong: #43536580;
     --text: #e9eef5;
     --muted: #a7b6c8;
-    --blue: #4f9bff;
+    --focus: #7fb0ff;
+    --skip-bg: #e9eef5;
+    --skip-fg: #0d2740;
+
+    /* Tuned for TEXT on dark panels — far too light to carry white labels, */
     --green: #4cc46a;
     --amber: #e0a83a;
     --red: #ff7b7b;
-    --focus: #7fb0ff;
-    /* The dark accents above are tuned for TEXT on dark panels and are far too
-       light to carry white button labels, so solid fills stay dark here. */
-    --blue-solid: #2f6fd0;
+    /* — so the solid fills that do carry white labels stay dark. */
     --green-solid: #1c7a37;
     --red-solid: #c0303c;
   }
 }
 
 :root[data-theme="dark"] {
-  --navy: #0d2740;
+  --brand: #0d2740;
+  --accent: #4f9bff;
+  --accent-solid: #2f6fd0;
+  --on-brand-soft: #b9d2e8;
+  --on-brand-body: #e6f0f9;
+  --on-brand-muted: #b9cee0;
+
   --bg: #0f1620;
   --card: #18212e;
   --soft: #141c27;
@@ -88,17 +164,35 @@
   --border-strong: #43536580;
   --text: #e9eef5;
   --muted: #a7b6c8;
-  --blue: #4f9bff;
+  --focus: #7fb0ff;
+  --skip-bg: #e9eef5;
+  --skip-fg: #0d2740;
+
   --green: #4cc46a;
   --amber: #e0a83a;
   --red: #ff7b7b;
-  --focus: #7fb0ff;
-  /* The dark accents above are tuned for TEXT on dark panels and are far too
-  light to carry white button labels, so solid fills stay dark here. */
-  --blue-solid: #2f6fd0;
   --green-solid: #1c7a37;
   --red-solid: #c0303c;
 }
+</style>
+<style>
+/*
+ * Machinist Transparency — component styles.
+ *
+ * This file contains NO colour, typeface or shape literals. Every such value
+ * comes from a custom property defined in theme.css, so the application can be
+ * re-skinned to a corporate identity without touching a single component rule.
+ * tests/demo.test.mjs fails the build if a literal creeps back in.
+ *
+ * Shop-floor constraints these rules are written against:
+ *   - Minimum 44px interactive height (--tap). A gloved hand on a wall terminal
+ *     cannot reliably hit a 32px button, and the approve/reject decision is the
+ *     most important control on the page — so it is also the largest.
+ *   - Secondary text meets WCAG AA on every surface it is used on, in both
+ *     colour schemes.
+ *   - The machine picker must not consume a whole tablet screen; below 900px it
+ *     becomes a compact horizontal strip so the workspace stays above the fold.
+ */
 
 * { box-sizing: border-box; }
 
@@ -112,7 +206,7 @@ body {
 h1, h2, h3, h4 { line-height: 1.25; }
 button, select, textarea, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
-code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .85em; }
+code { font-family: var(--font-mono); font-size: .85em; }
 
 :focus-visible {
   outline: 3px solid var(--focus);
@@ -124,8 +218,8 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
   position: absolute;
   left: -9999px;
   top: 0;
-  background: #fff;
-  color: var(--navy);
+  background: var(--skip-bg);
+  color: var(--skip-fg);
   padding: 12px 18px;
   z-index: 100;
   font-weight: 700;
@@ -140,7 +234,7 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 
 /* ------------------------------------------------------------------ header */
 
-header { background: var(--navy); color: #fff; padding: 16px 24px; }
+header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
 
 .header {
   max-width: 1240px;
@@ -152,14 +246,26 @@ header { background: var(--navy); color: #fff; padding: 16px 24px; }
   flex-wrap: wrap;
 }
 
-.brand h1 { font-size: 1.3rem; margin: 0; }
-.tagline { margin: 2px 0 0; color: #cfe0f0; }
+.brand h1 { font-size: 1.3rem; margin: 0; font-family: var(--font-display); }
+
+/* Corporate mark, if theme.css supplies one. Absent by default. */
+.brand-mark {
+  display: var(--brand-logo-display, none);
+  width: var(--brand-logo-width);
+  height: 34px;
+  margin-bottom: 8px;
+  background-image: var(--brand-logo);
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+}
+.tagline { margin: 2px 0 0; color: var(--on-brand-soft); }
 .promise {
   margin: 8px 0 0;
   font-size: .84rem;
-  color: #e6f0f9;
-  background: #ffffff1f;
-  border-left: 3px solid #7fb6e8;
+  color: var(--on-brand-body);
+  background: var(--on-brand-veil);
+  border-left: 3px solid var(--on-brand-rule);
   padding: 6px 10px;
   border-radius: 0 6px 6px 0;
   max-width: 56ch;
@@ -167,19 +273,19 @@ header { background: var(--navy); color: #fff; padding: 16px 24px; }
 
 .header-right { display: grid; gap: 10px; justify-items: end; }
 .identity { display: grid; justify-items: end; text-align: right; }
-.identity .muted { color: #c3d6e8; }
+.identity .muted { color: var(--on-brand-muted); }
 
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .tab {
   min-height: var(--tap);
   padding: 10px 16px;
-  border: 1px solid #ffffff8c;
+  border: 1px solid var(--on-brand-border);
   border-radius: 10px;
   background: transparent;
-  color: #fff;
+  color: var(--on-brand);
   font-weight: 700;
 }
-.tab[aria-selected="true"] { background: #fff; color: var(--navy); border-color: #fff; }
+.tab[aria-selected="true"] { background: var(--on-brand); color: var(--brand); border-color: var(--on-brand); }
 
 .nojs { max-width: 1240px; margin: 16px auto; }
 
@@ -276,7 +382,7 @@ main { max-width: 1240px; margin: auto; padding: 22px 24px 40px; }
   color: var(--text);
   min-height: var(--tap);
 }
-.machine.selected { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--card)); }
+.machine.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
 .machine .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .machine .name { font-size: 1.05rem; font-weight: 800; }
 .machine .wo { font-weight: 800; }
@@ -289,8 +395,8 @@ main { max-width: 1240px; margin: auto; padding: 22px 24px 40px; }
   font-weight: 800;
   padding: 3px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--blue) 12%, transparent);
-  color: var(--blue);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 .flag.urgent { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
 .flag.deferred { background: color-mix(in srgb, var(--amber) 16%, transparent); color: var(--amber); }
@@ -372,13 +478,13 @@ main { max-width: 1240px; margin: auto; padding: 22px 24px 40px; }
   display: block;
 }
 .track.big-track { height: 14px; }
-.bar { height: 100%; background: var(--blue-solid); display: block; }
+.bar { height: 100%; background: var(--accent-solid); display: block; }
 
 /* -------------------------------------------------------------- ETA block */
 
 .eta {
   border: 1px solid var(--border);
-  border-left: 4px solid var(--blue);
+  border-left: 4px solid var(--accent);
   border-radius: 8px;
   padding: 10px 12px;
   background: var(--card);
@@ -477,9 +583,9 @@ main { max-width: 1240px; margin: auto; padding: 22px 24px 40px; }
   font-weight: 700;
 }
 .btn:hover { background: var(--soft); }
-.btn.primary { background: var(--blue-solid); border-color: var(--blue-solid); color: #fff; }
-.btn.good { background: var(--green-solid); border-color: var(--green-solid); color: #fff; }
-.btn.bad { background: var(--red-solid); border-color: var(--red-solid); color: #fff; }
+.btn.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-brand); }
+.btn.good { background: var(--green-solid); border-color: var(--green-solid); color: var(--on-brand); }
+.btn.bad { background: var(--red-solid); border-color: var(--red-solid); color: var(--on-brand); }
 .btn.primary:hover, .btn.good:hover, .btn.bad:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 /* "small" is a density hint, never a reason to drop below the tap target. */
@@ -511,9 +617,9 @@ main { max-width: 1240px; margin: auto; padding: 22px 24px 40px; }
   padding: 10px 12px;
   margin: 0;
   font-size: .9rem;
-  background: color-mix(in srgb, var(--blue) 9%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   color: var(--text);
-  border-left: 4px solid var(--blue);
+  border-left: 4px solid var(--accent);
 }
 .notice.ok, .banner.ok { background: color-mix(in srgb, var(--green) 10%, transparent); border-left-color: var(--green); }
 .notice.warn, .banner.warn { background: color-mix(in srgb, var(--amber) 12%, transparent); border-left-color: var(--amber); }
@@ -553,7 +659,7 @@ main { max-width: 1240px; margin: auto; padding: 22px 24px 40px; }
 }
 .hbar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
 .hfill {
-  background: var(--blue);
+  background: var(--accent);
   border-radius: 4px 4px 0 0;
   min-height: 2px;
   position: relative;
@@ -589,7 +695,7 @@ dialog {
   color: var(--text);
   overflow: auto;
 }
-dialog::backdrop { background: #0b1420cc; }
+dialog::backdrop { background: var(--backdrop); }
 
 .dialog-head {
   padding: 16px 18px;
@@ -619,7 +725,7 @@ legend { font-size: .8rem; font-weight: 800; color: var(--muted); text-transform
   padding: 12px;
   min-height: var(--tap);
 }
-.modal-machine.selected { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--card)); }
+.modal-machine.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
 
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form label { display: grid; gap: 5px; font-size: .84rem; font-weight: 700; color: var(--muted); }
@@ -647,7 +753,7 @@ textarea { min-height: 80px; resize: vertical; }
   flex-wrap: wrap;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-left: 4px solid var(--blue);
+  border-left: 4px solid var(--accent);
   border-radius: 8px;
   background: var(--soft);
 }
@@ -663,7 +769,7 @@ textarea { min-height: 80px; resize: vertical; }
   border: 1px solid var(--border);
   border-radius: 10px;
 }
-.op.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
+.op.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .op.done { opacity: .62; }
 .op.unposted { border-style: dashed; opacity: .72; }
 .op.unposted .op-track { visibility: hidden; }
@@ -673,7 +779,7 @@ textarea { min-height: 80px; resize: vertical; }
   background: color-mix(in srgb, var(--text) 8%, transparent);
   border-radius: 7px; font-weight: 850; font-size: .82rem;
 }
-.op.active .op-seq { background: var(--blue-solid); color: #fff; }
+.op.active .op-seq { background: var(--accent-solid); color: var(--on-brand); }
 .op.done .op-seq { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
 .op-main { flex: 1; display: grid; gap: 3px; min-width: 0; }
 .op-title { font-weight: 700; }
@@ -690,7 +796,7 @@ textarea { min-height: 80px; resize: vertical; }
 
 .source-tabs { margin-bottom: 14px; }
 .source-tab { flex: 1; }
-.source-tab[aria-selected="true"] { background: var(--blue-solid); border-color: var(--blue-solid); color: #fff; }
+.source-tab[aria-selected="true"] { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-brand); }
 
 .order-list { display: grid; gap: 8px; margin: 12px 0; max-height: 320px; overflow-y: auto; }
 .order {
@@ -705,7 +811,7 @@ textarea { min-height: 80px; resize: vertical; }
   padding: 12px 14px;
   min-height: var(--tap);
 }
-.order.selected { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--card)); }
+.order.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
 .order:disabled { opacity: .55; cursor: not-allowed; }
 .order .row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 .order-flags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
@@ -764,12 +870,12 @@ textarea { min-height: 80px; resize: vertical; }
   right: 18px;
   bottom: 18px;
   max-width: min(420px, calc(100vw - 36px));
-  background: #16202f;
-  color: #fff;
+  background: var(--toast-bg);
+  color: var(--toast-fg);
   padding: 12px 16px;
   border-radius: 10px;
   z-index: 40;
-  box-shadow: 0 8px 28px #0b142033;
+  box-shadow: var(--shadow);
   font-weight: 600;
 }
 .toast.ok { background: var(--green-solid); }
@@ -856,6 +962,7 @@ textarea { min-height: 80px; resize: vertical; }
 <header>
   <div class="header">
     <div class="brand">
+      <span class="brand-mark" role="img" aria-label="Company logo"></span>
       <h1>Machinist Transparency</h1>
       <p class="tagline">CNC visibility and controlled queue changes</p>
       <p class="promise">Measures machines and processes — <strong>not</strong> individual operator performance. No

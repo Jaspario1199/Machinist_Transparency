@@ -129,12 +129,42 @@ is read as a commitment, and committed dates belong to Dynamics 365
 - ETA modelling is simple: observed cycle median and spread, plus remaining
   setup. It has no operating calendar, shift pattern or labour availability.
 
+## Re-skinning to a corporate identity
+
+Everything visual lives in **`demo/theme.css`** — colours, typefaces, radii, and
+a slot for the company mark. `app.css` contains no colour or typeface literals
+at all, and a test fails the build if one creeps back in, so matching a brand
+never means touching component styles.
+
+To apply an identity:
+
+1. Replace the values in the `BRAND` block of `theme.css` (`--brand`,
+   `--accent`, `--accent-solid`, and the `--on-brand-*` text colours that sit on
+   the header band).
+2. Optionally set `--brand-logo` to a data-URI of the mark and
+   `--brand-logo-display: block`.
+3. For a licensed corporate typeface, self-host or inline it as a data URI and
+   put it at the front of `--font-body`. **Do not link a CDN** — the page has to
+   render from a file on a USB stick with no network, and a test enforces that.
+4. Run `npm test`.
+
+Step 4 is not optional. The suite checks contrast against the surface actually
+painted behind each piece of text, in both colour schemes, and will fail a
+palette that drops secondary text or button labels below WCAG AA. A shop
+terminal in bright light is the worst-case reading environment there is, so a
+brand colour that fails is a brand colour that needs a darker variant for the
+`*-solid` fills.
+
+State colours (green / amber / red) are deliberately **not** brand tokens. They
+carry meaning on the floor and should stay recognisable through a rebrand.
+
 ## Structure
 
 ```
 demo/
   index.html                  markup only
-  app.css                     styles
+  theme.css                   BRAND — the only file to edit when re-skinning
+  app.css                     component styles, no literals
   app/analytics.js            ETA, confidence, risk, Pareto, distribution, scoring
   app/state.js                state, governance rules, audit, telemetry simulation
   app/views.js                rendering (all output escaped)

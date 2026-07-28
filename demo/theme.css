@@ -1,0 +1,167 @@
+/*
+ * ============================================================================
+ * BRAND THEME — this is the only file you edit to re-skin the application.
+ * ============================================================================
+ *
+ * Every colour, typeface and shape decision lives here as a custom property.
+ * app.css contains no colour literals at all, so nothing in the component
+ * styles has to be touched to match a corporate identity. A test enforces that.
+ *
+ * To apply the Rochester Sensors / Bluestar identity, replace the values in the
+ * "BRAND" block below and, if the corporate typeface is licensed for this use,
+ * the font stack. Everything else — state colours, spacing, contrast handling —
+ * is derived and should not need changing.
+ *
+ * Two rules that must survive any re-skin:
+ *
+ *   1. Secondary text must keep 4.5:1 contrast against the surface behind it,
+ *      and solid buttons must keep 4.5:1 against white label text, in BOTH
+ *      colour schemes. `npm test` checks this and will fail the build if a new
+ *      palette breaks it. That is deliberate — a shop terminal in bright light
+ *      is the worst-case reading environment there is.
+ *   2. Do not link a webfont from a CDN. The demo has to work from a file on a
+ *      USB stick with no network. Self-host, or embed as a data URI below.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- BRAND --
+   * Replace these with the corporate palette. --brand is the header and the
+   * primary identity colour; --accent drives interactive elements.
+   */
+  --brand: #123b5d;              /* header band, primary identity            */
+  --accent: #1257b0;             /* links, selection, active states          */
+  --accent-solid: #1257b0;       /* filled buttons — needs 4.5:1 with white  */
+
+  /* On-brand text: everything that sits on top of --brand. */
+  --on-brand: #ffffff;
+  --on-brand-soft: #cfe0f0;      /* tagline                                  */
+  --on-brand-body: #e6f0f9;      /* the promise statement                    */
+  --on-brand-muted: #c3d6e8;     /* "signed in as"                           */
+  --on-brand-veil: #ffffff1f;    /* translucent panel on the header band     */
+  --on-brand-rule: #7fb6e8;      /* accent rule on the header band           */
+  --on-brand-border: #ffffff8c;  /* outline buttons on the header band       */
+
+  /* ------------------------------------------------------------ TYPEFACE --
+   * No CDN links — the page must render from file:// with no network.
+   * To use a licensed corporate face, self-host it or inline it here:
+   *
+   *   @font-face { font-family: "Corporate"; src: url(data:font/woff2;base64,…) }
+   *
+   * then put it at the front of --font-body.
+   */
+  --font-body: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* --------------------------------------------------------------- SHAPE -- */
+  --radius: 12px;
+  --radius-sm: 10px;
+  --radius-lg: 14px;
+  --tap: 44px;                   /* minimum touch target — see app.css notes */
+  --shadow: 0 8px 28px #0b142033;
+
+  /* ---------------------------------------------------------- STATE HUES --
+   * Semantic, not brand. Green/amber/red carry meaning on the shop floor and
+   * should stay recognisably green/amber/red even under a rebrand.
+   * The *-solid variants are the fills that carry white label text.
+   */
+  --green: #14692c;
+  --amber: #7a5200;
+  --red: #b3202c;
+  --green-solid: #14692c;
+  --red-solid: #b3202c;
+
+  /* ------------------------------------------------------------ SURFACES -- */
+  --bg: #f3f6f9;
+  --card: #ffffff;
+  --soft: #f7f9fc;
+  --simbar-bg: #eef3f8;
+  --border: #d0dae5;
+  --border-strong: #a9b8c9;
+  --text: #16202f;
+  --muted: #4f5d70;              /* 6.0:1 on --card, 5.6:1 on --soft         */
+  --focus: #0b57d0;
+  --backdrop: #0b1420cc;
+  --toast-bg: #16202f;
+  --toast-fg: #ffffff;
+  --skip-bg: #ffffff;
+  --skip-fg: #123b5d;
+
+  /* --------------------------------------------------------------- LOGO --
+   * Drop the corporate mark in as a data URI and it appears in the header:
+   *   --brand-logo: url("data:image/svg+xml;base64,…");
+   * Left as `none`, the header shows the wordmark alone.
+   */
+  --brand-logo: none;
+  --brand-logo-width: 132px;
+  /* Set to `block` at the same time as --brand-logo to reveal the mark. */
+  --brand-logo-display: none;
+
+  font-family: var(--font-body);
+}
+
+/*
+ * Dark theme, defined at token level only — components are styled through the
+ * tokens and never inside a media query, so both routes below stay in sync.
+ *
+ *   1. the operating-system preference, unless the viewer has pinned light;
+ *   2. an explicit data-theme="dark" on the root, which a host page or a
+ *      theme toggle can stamp and which must win over the OS preference.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand: #0d2740;
+    --accent: #4f9bff;
+    --accent-solid: #2f6fd0;
+    --on-brand-soft: #b9d2e8;
+    --on-brand-body: #e6f0f9;
+    --on-brand-muted: #b9cee0;
+
+    --bg: #0f1620;
+    --card: #18212e;
+    --soft: #141c27;
+    --simbar-bg: #131c27;
+    --border: #2c3948;
+    --border-strong: #43536580;
+    --text: #e9eef5;
+    --muted: #a7b6c8;
+    --focus: #7fb0ff;
+    --skip-bg: #e9eef5;
+    --skip-fg: #0d2740;
+
+    /* Tuned for TEXT on dark panels — far too light to carry white labels, */
+    --green: #4cc46a;
+    --amber: #e0a83a;
+    --red: #ff7b7b;
+    /* — so the solid fills that do carry white labels stay dark. */
+    --green-solid: #1c7a37;
+    --red-solid: #c0303c;
+  }
+}
+
+:root[data-theme="dark"] {
+  --brand: #0d2740;
+  --accent: #4f9bff;
+  --accent-solid: #2f6fd0;
+  --on-brand-soft: #b9d2e8;
+  --on-brand-body: #e6f0f9;
+  --on-brand-muted: #b9cee0;
+
+  --bg: #0f1620;
+  --card: #18212e;
+  --soft: #141c27;
+  --simbar-bg: #131c27;
+  --border: #2c3948;
+  --border-strong: #43536580;
+  --text: #e9eef5;
+  --muted: #a7b6c8;
+  --focus: #7fb0ff;
+  --skip-bg: #e9eef5;
+  --skip-fg: #0d2740;
+
+  --green: #4cc46a;
+  --amber: #e0a83a;
+  --red: #ff7b7b;
+  --green-solid: #1c7a37;
+  --red-solid: #c0303c;
+}

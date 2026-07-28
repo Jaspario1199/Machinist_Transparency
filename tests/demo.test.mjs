@@ -1320,3 +1320,69 @@ test('the stored program library is surfaced with its lifetime run count', async
   assert.match(body, /412 lifetime runs across 6 jobs/);
   assert.match(body, /repeat order does not start from nothing/);
 });
+
+// -------------------------------------------------------------- theming ---
+
+test('component styles contain no colour or typeface literals', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(join(root, 'demo', 'app.css'), 'utf8');
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const hex = withoutComments.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+  assert.deepEqual(hex, [], `app.css must take every colour from theme.css, found: ${hex.join(', ')}`);
+
+  const functional = withoutComments.match(/\b(rgb|rgba|hsl|hsla)\(/g) ?? [];
+  assert.deepEqual(functional, [], 'app.css must not declare colours directly');
+
+  // Extract the value and inspect it, rather than relying on a lookahead that
+  // whitespace can backtrack past.
+  const fonts = [...withoutComments.matchAll(/font-family:\s*([^;}]+)/g)]
+    .map((m) => m[1].trim())
+    .filter((value) => !value.startsWith('var(') && value !== 'inherit');
+  assert.deepEqual(fonts, [], `typefaces belong in theme.css, found: ${fonts.join(' | ')}`);
+});
+
+test('re-skinning through theme.css alone changes the whole interface', async () => {
+  const page = await open();
+
+  // Stand in for an edited theme.css: override the brand tokens at runtime.
+  await page.evaluate(() => {
+    const r = document.documentElement;
+    r.style.setProperty('--brand', '#5c1a1a');
+    r.style.setProperty('--accent', '#a33');
+    r.style.setProperty('--accent-solid', '#8c2020');
+  });
+
+  const painted = await page.evaluate(() => ({
+    header: getComputedStyle(document.querySelector('header')).backgroundColor,
+    primaryBtn: getComputedStyle(document.querySelector('.btn.primary, [data-act]')).backgroundColor,
+    selectedCard: getComputedStyle(document.querySelector('.machine.selected')).borderTopColor,
+  }));
+
+  assert.match(painted.header, /92, 26, 26/, 'the header must follow --brand');
+  assert.notEqual(painted.selectedCard, 'rgb(18, 87, 176)', 'selection must follow --accent, not a literal');
+});
+
+test('the corporate logo slot is present and hidden until a mark is supplied', async () => {
+  const page = await open();
+  const mark = await page.$('.brand-mark');
+  assert.ok(mark, 'there must be a slot for the company mark');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.brand-mark')).display), 'none',
+    'the slot stays out of the way until a logo is set');
+
+  await page.evaluate(() => {
+    const r = document.documentElement;
+    r.style.setProperty('--brand-logo', 'url("data:image/svg+xml;base64,PHN2Zy8+")');
+    r.style.setProperty('--brand-logo-display', 'block');
+  });
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.brand-mark')).display), 'block');
+});
+
+test('the theme never links an external font or stylesheet', async () => {
+  const { readFileSync } = await import('node:fs');
+  for (const file of ['theme.css', 'app.css', 'index.html', 'standalone.html']) {
+    const content = readFileSync(join(root, 'demo', file), 'utf8');
+    const remote = content.match(/@import[^;]*https?:|url\(\s*['"]?https?:/g) ?? [];
+    assert.deepEqual(remote, [], `${file} must not reach the network — it has to run from a USB stick`);
+  }
+});
