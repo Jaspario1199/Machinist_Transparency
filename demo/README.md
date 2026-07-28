@@ -1,12 +1,12 @@
-# Simulated Browser Beta
+# Role-Based Simulated Browser Beta
 
-This is a dependency-free workflow demo for the Machinist Transparency project.
+This dependency-free demo validates the CNC visibility and queue-request workflow before any real CNC or Dynamics 365/Bluestar connection.
 
 ## Run
 
-Open `index.html` in a modern browser. No installation, server, database, CNC, or D365 access is required.
+Open `index.html` in Chrome or Edge. No installation, server, database, CNC connection, or business-system access is required.
 
-For a simple local web server:
+A simple local server can also be used:
 
 ```bash
 python -m http.server 8080 --directory demo
@@ -14,39 +14,40 @@ python -m http.server 8080 --directory demo
 
 Then open `http://localhost:8080`.
 
-## Machine-first interface
+## Role-specific behavior
 
-The page is organized for fast machinist use:
+### Machinist
 
-1. Large buttons across the top represent each CNC.
-2. Clicking a machine opens only that machine's workspace below.
-3. The selected workspace shows five quick facts: work order, progress, remaining quantity, ETA, and queue length.
-4. Expandable sections contain:
-   - Current job and progress
-   - Approved executable queue
-   - Queue-change requests
-   - Downtime and exception reason
-   - Controller and FS1 file details
-5. Switching machines replaces the lower workspace instead of showing three dense machine cards at once.
+1. Select a CNC using the large machine buttons.
+2. Review only that machine's current job, executable queue, approvals, downtime reason, and file information.
+3. Approve or reject queue-change requests.
+4. Classify downtime with one button only when the machine cannot infer the reason.
 
-## Demonstrated workflow
+### Engineer / PM
 
-1. Choose one of the three simulated CNCs.
-2. Review its state, active job, progress, ETA, and approved executable queue.
-3. Switch to **PM / Engineer** and submit a machine-specific queue-change request.
-4. Switch to **Machinist** and approve, reject, defer, or propose another position.
-5. The executable queue changes only after machinist approval.
-6. A deferred approval takes effect only after the current job finishes.
-7. Stop the selected machine and classify the downtime reason with one click.
-8. Advance simulated cycles and review the selected machine's activity log.
+1. Select a CNC to view read-only technical details and the approved executable queue.
+2. Click **Request queue change**.
+3. In the popup, first select the machine.
+4. Then select the queued work order, desired queue position, reason, and optional note.
+5. Submit the request for machinist approval.
+
+### Leadership
+
+1. Review high-level machine metrics and risk.
+2. Select a CNC for a read-only production summary.
+3. Use the same controlled popup to request—not directly perform—a priority change.
+
+## Governance behavior
+
+- Engineers, PMs, and leaders cannot directly alter the executable CNC queue.
+- The machinist must approve the requested move before it becomes active.
+- Approval after the current job remains deferred until the active job completes.
+- Requests, approvals, rejections, and downtime reasons remain visible in the demo state.
 
 ## Intentional limitations
 
-- In-memory browser state only; refresh resets the demo.
+- Browser-memory state only; refresh resets the demo.
 - Simulated machine data only.
-- No authentication or authorization.
-- No D365/Bluestar integration.
-- No database, API, notifications, or real CNC protocol.
+- No authentication or production authorization.
+- No D365/Bluestar, FS1, database, API, notification, or CNC protocol connection.
 - ETA is intentionally simplified.
-
-These limitations keep the first review focused on readability, machinist effort, and workflow before production architecture is implemented.
