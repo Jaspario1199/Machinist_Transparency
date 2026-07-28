@@ -119,7 +119,8 @@
     const priority = PRIORITY_LABELS[machine.active.requestedPriority] ?? '—';
     return `<div class="job">
       <div class="row">
-        <div><div class="wo big">${esc(machine.active.wo)}</div><div class="muted">${esc(machine.active.part)}</div></div>
+        <div><div class="wo big">${esc(machine.active.wo)}</div><div class="muted">${esc(machine.active.part)}</div>
+          ${machine.active.unplanned ? `<div class="unplanned-badge">Unplanned · ${esc(machine.active.unplanned.categoryLabel)} · no work order</div>` : ''}</div>
         <div class="right-align"><div class="muted">Requested priority (D365)</div><div><strong>${esc(priority)}</strong></div></div>
       </div>
       <div class="track big-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}"
@@ -146,7 +147,10 @@
    * step 4) and reorder it directly — everyone else has to ask.
    */
   function queueList(state, machine, now, controls = false) {
-    if (!machine.queue.length) return '<p class="empty">No queued work. The machine will go idle when the current job finishes.</p>';
+    if (!machine.queue.length) {
+      return `<p class="empty">No queued work. The machine will go idle when the current job finishes.</p>
+        ${controls ? '<div class="queue-footer"><button class="btn primary" data-act="add-job" data-focus-key="add-job">Add work to this machine</button></div>' : ''}`;
+    }
     const projection = A.queueProjection(state, machine);
     const last = machine.queue.length - 1;
 
@@ -154,6 +158,9 @@
       const proj = projection[i];
       const readyKind = job.readyCode === 'READY' ? 'ok' : 'warn';
       const partial = job.done ? `<span class="readiness warn">${esc(job.done)} of ${esc(job.qty)} already run</span>` : '';
+      const unplanned = job.source === 'UNPLANNED'
+        ? `<span class="unplanned-badge">Unplanned · ${esc(job.unplanned.categoryLabel)} · no work order</span>`
+        : '';
 
       const rowControls = controls ? `<span class="qcontrols">
         <button class="qbtn" data-queue-move="up" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-up"
@@ -161,6 +168,8 @@
         <button class="qbtn" data-queue-move="down" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-down"
           ${i === last ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} down">▼</button>
         <button class="btn small qnow" data-queue-run="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-run">Run this now</button>
+        <button class="qbtn" data-queue-remove="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-remove"
+          aria-label="Remove ${esc(job.wo)} from this queue">✕</button>
       </span>` : '';
 
       return `<li class="q">
@@ -169,13 +178,17 @@
           <span class="wo">${esc(job.wo)} · ${esc(job.part)}</span>
           <span class="muted">${esc(job.qty)} pcs · ${esc(PRIORITY_LABELS[job.requestedPriority] ?? '—')}</span>
           <span class="readiness ${esc(readyKind)}">${esc(job.ready)}</span>
+          ${unplanned}
           ${partial}
         </span>
         <span class="qeta muted">${proj.blocked ? 'Blocked' : `finishes ${esc(A.formatClockRange({ blocked: false, lowMin: proj.lowMin, highMin: proj.highMin }, now))}`}</span>
         ${rowControls}
       </li>`;
     }).join('')}</ol>
-    ${controls ? '<p class="muted small">You control this queue directly. Engineering and leadership can only request a change.</p>' : ''}`;
+    ${controls ? `<div class="queue-footer">
+      <button class="btn primary" data-act="add-job" data-focus-key="add-job">Add work to this machine</button>
+      <span class="muted small">You control this queue directly. Engineering and leadership can only request a change.</span>
+    </div>` : ''}`;
   }
 
   /** The large one-tap reason buttons, shared by the panel and the popup. */
@@ -466,6 +479,8 @@
     const unclassified = state.machines.filter((m) => S.needsDowntimeReason(state, m)).length;
     const blockers = state.blockers.filter((b) => b.status !== 'CLOSED').length;
     const atRisk = state.machines.filter((m) => A.dueDateRisk(state, m, now).level === 'HIGH').length;
+    const unplannedCount = state.machines.reduce((a, m) =>
+      a + m.queue.filter((q) => q.source === 'UNPLANNED').length + (m.active.unplanned ? 1 : 0), 0);
 
     const tiles = [
       { label: 'Producing', value: producing },
@@ -476,6 +491,8 @@
       { label: 'Jobs at due-date risk', value: atRisk, kind: atRisk ? 'bad' : '' },
       { label: 'Unclassified stoppages', value: unclassified, kind: unclassified ? 'bad' : '' },
       { label: 'Jobs queued', value: state.machines.reduce((a, m) => a + m.queue.length, 0) },
+      { label: 'Unplanned work, no order', value: unplannedCount, kind: unplannedCount ? 'warn' : '' },
+      { label: 'Released, not yet on a machine', value: state.unassignedOrders.length },
     ];
     return tiles.map((t) => `<div class="metric ${esc(t.kind ?? '')}">
       <div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div></div>`).join('');

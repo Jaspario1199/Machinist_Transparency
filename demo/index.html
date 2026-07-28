@@ -169,6 +169,57 @@
   </div>
 </dialog>
 
+<!-- Add work to a machine's queue -->
+<dialog id="addJobDialog" aria-labelledby="addJobTitle">
+  <div class="dialog-head">
+    <div>
+      <h3 id="addJobTitle">Add work to this machine</h3>
+      <p class="muted" id="addJobSubtitle"></p>
+    </div>
+    <button class="btn small" id="addJobClose" type="button">Close</button>
+  </div>
+  <div class="dialog-body">
+    <div class="tabs source-tabs" role="tablist" aria-label="Where the work comes from">
+      <button class="btn source-tab active" role="tab" id="sourceReleased" aria-selected="true" type="button">Released work order</button>
+      <button class="btn source-tab" role="tab" id="sourceUnplanned" aria-selected="false" type="button">Unplanned work</button>
+    </div>
+
+    <section id="releasedPane">
+      <p class="notice">Released production orders from Dynamics 365 that are not yet on a machine.
+        Adding one records <strong>where it runs</strong> — it never creates or edits the order itself.</p>
+      <div id="releasedList" class="order-list"></div>
+      <div id="assignIssues"></div>
+      <div class="form">
+        <label class="full"><span>Queue position</span><select id="addJobPosition"></select></label>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="addJobCancel">Cancel</button>
+        <button class="btn primary" type="button" id="addJobConfirm" disabled>Add to queue</button>
+      </div>
+    </section>
+
+    <section id="unplannedPane" hidden>
+      <p class="notice warn">Work with no production order — rework, a tooling trial, a fixture proving run, a sample.
+        This is recorded so the machine time is visible. It is <strong>not</strong> a production order and never reaches
+        Dynamics 365. It stays flagged until a work order is attached.</p>
+      <form id="unplannedForm">
+        <div class="form">
+          <label class="full"><span>What kind of work is this?</span><select id="unplannedCategory"></select></label>
+          <label class="full"><span>One line — what is being done and to what</span>
+            <textarea id="unplannedDescription" placeholder="e.g. Re-cut bore on 6 rejected Sensor Housing A"></textarea></label>
+          <label><span>Estimated machine time (minutes)</span><select id="unplannedEstimate"></select></label>
+          <label><span>Authorised by</span><select id="unplannedAuthorisedBy"></select></label>
+          <label class="full"><span>Queue position</span><select id="unplannedPosition"></select></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn" type="button" id="unplannedCancel">Cancel</button>
+          <button class="btn primary" type="submit" id="unplannedConfirm">Add unplanned work</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</dialog>
+
 <!-- Downtime reason — raised automatically once a stoppage passes the threshold -->
 <dialog id="downtimeDialog" aria-labelledby="downtimeTitle">
   <div class="dialog-head">

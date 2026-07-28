@@ -49,6 +49,7 @@
       shiftStart: seed.shiftStart,
       actors: seed.actors,
       machines: seed.machines,
+      unassignedOrders: seed.unassignedOrders,
       requests: seed.requests,
       blockers: seed.blockers,
       audit: [],
@@ -63,7 +64,7 @@
         sections: {},
         lastEvent: null,
       },
-      counters: { request: seed.requests.length, blocker: seed.blockers.length, audit: 0 },
+      counters: { request: seed.requests.length, blocker: seed.blockers.length, audit: 0, unplanned: 0 },
     };
 
     seedAudit(state, now);
@@ -546,6 +547,228 @@
   }
 
 
+
+  // ------------------------------------------------ getting work onto a CNC ---
+
+  const UNPLANNED_CATEGORIES = [
+    { code: 'REWORK', label: 'Rework / salvage', note: 'Repairing parts from an existing order' },
+    { code: 'TOOLING_TRIAL', label: 'Tooling or program trial', note: 'Proving a tool, offset or program change' },
+    { code: 'FIXTURE', label: 'Fixture proving', note: 'Setting or checking a new fixture' },
+    { code: 'SAMPLE', label: 'Sample or test piece', note: 'Quote sample, first article, R&D piece' },
+    { code: 'MAINTENANCE', label: 'Maintenance or calibration', note: 'Warm-up, ballbar, service work' },
+  ];
+
+  const REMOVAL_REASONS = [
+    'Moved to another machine',
+    'Material or tooling not available',
+    'Cancelled or put on hold in D365',
+    'Superseded by a revision change',
+    'Added to this machine in error',
+    'Other',
+  ];
+
+  /**
+   * Checks a released order against the machine it is about to be queued on.
+   *
+   * `blocking` stops the assignment outright. `warnings` do not — a machinist
+   * often has a legitimate reason to deviate, and a system that refuses gets
+   * worked around. Warnings are acknowledged and recorded instead.
+   */
+  function assignmentIssues(state, machine, order) {
+    const blocking = [];
+    const warnings = [];
+
+    if (order.revisionStatus !== 'RELEASED') {
+      blocking.push(`${order.rev} is not released in Bluestar. Running an unreleased revision is a quality escape — release it first.`);
+    }
+    if (order.routedResource && order.routedResource !== machine.id) {
+      const routed = machineById(state, order.routedResource);
+      warnings.push(`The D365 routing puts this on ${routed ? routed.name : order.routedResource}. Running it here is a routing deviation.`);
+    }
+    if (order.materialStatus === 'UNCONFIRMED') warnings.push('Material is not confirmed in D365.');
+    if (order.materialStatus === 'SHORT') warnings.push('Material is short in D365.');
+    if (order.inspectionHold) warnings.push('There is an open inspection hold on this order.');
+
+    return { blocking, warnings, canAssign: blocking.length === 0 };
+  }
+
+  function readinessFromOrder(order, issues) {
+    if (order.inspectionHold) return { ready: 'Inspection hold', readyCode: 'INSPECTION' };
+    if (order.materialStatus !== 'READY') return { ready: 'Material not confirmed', readyCode: 'MATERIAL' };
+    if (issues.warnings.length) return { ready: 'Routing deviation — accepted', readyCode: 'TOOLING' };
+    return { ready: 'Material ready', readyCode: 'READY' };
+  }
+
+  /**
+   * Puts a released D365 order onto a machine's executable queue.
+   *
+   * This does NOT create a production order. It records a local assignment of
+   * an order that already exists in Dynamics 365, plus a queue position. See
+   * docs/03 — quantity, due date, revision and priority remain D365's.
+   */
+  function addOrderToQueue(state, machineId, wo, position, acknowledged = false) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const index = state.unassignedOrders.findIndex((o) => o.wo === wo);
+    if (index < 0) return { ok: false, reason: `${wo} is not in the released, unassigned list` };
+
+    const order = state.unassignedOrders[index];
+    const issues = assignmentIssues(state, machine, order);
+    if (!issues.canAssign) return { ok: false, reason: issues.blocking[0] };
+    if (issues.warnings.length && !acknowledged) {
+      return { ok: false, reason: 'Warnings must be acknowledged before this order can be queued', issues };
+    }
+
+    const before = queueWos(machine);
+    state.unassignedOrders.splice(index, 1);
+    const readiness = readinessFromOrder(order, issues);
+    const job = {
+      wo: order.wo,
+      part: order.part,
+      qty: order.qty,
+      done: 0,
+      cycleMedianMin: order.cycleMedianMin,
+      cycleSigmaMin: order.cycleSigmaMin,
+      setupMin: order.setupMin,
+      program: order.program,
+      requestedPriority: order.requestedPriority,
+      dueAt: order.dueAt,
+      rev: order.rev,
+      source: 'D365',
+      ...readiness,
+    };
+    const at = Math.max(1, Math.min(position ?? machine.queue.length + 1, machine.queue.length + 1));
+    machine.queue.splice(at - 1, 0, job);
+
+    record(state, {
+      machineId,
+      event: 'JOB_ADDED_TO_QUEUE',
+      wo: order.wo,
+      summary: `Added released order ${order.wo} (${order.part}, ${order.rev}) at position ${at}`
+        + `${issues.warnings.length ? ` — accepted with: ${issues.warnings.join(' ')}` : ''}`,
+      before,
+      after: queueWos(machine),
+    });
+    return { ok: true, message: `${order.wo} queued at position ${at}` };
+  }
+
+  /**
+   * Records unplanned work that has no production order — rework, a tooling
+   * trial, a fixture proving run, a sample.
+   *
+   * This is the honest middle ground. It happens on every shop floor, and if
+   * the system has no way to represent it the machine time simply disappears
+   * from the record. It is deliberately NOT a production order: it never
+   * reaches D365, it is badged as unplanned everywhere it appears, and it is
+   * reported separately so the total is visible rather than buried.
+   */
+  function addUnplannedJob(state, machineId, input) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const category = UNPLANNED_CATEGORIES.find((c) => c.code === input.category);
+    if (!category) return { ok: false, reason: 'Pick what kind of work this is' };
+    if (!input.description || !input.description.trim()) {
+      return { ok: false, reason: 'Unplanned work needs a one-line description' };
+    }
+    if (!input.authorizedBy || !input.authorizedBy.trim()) {
+      return { ok: false, reason: 'Unplanned work needs a name against it' };
+    }
+
+    const estimateMin = Math.max(1, Number(input.estimateMin) || 30);
+    state.counters.unplanned += 1;
+    const reference = `UNPLANNED-${String(state.counters.unplanned).padStart(3, '0')}`;
+    const before = queueWos(machine);
+
+    const job = {
+      wo: reference,
+      part: input.description.trim(),
+      qty: 1,
+      done: 0,
+      cycleMedianMin: estimateMin,
+      cycleSigmaMin: estimateMin * 0.25,
+      setupMin: 5,
+      program: '—',
+      requestedPriority: 3,
+      dueAt: Date.now() + estimateMin * MIN,
+      source: 'UNPLANNED',
+      unplanned: {
+        category: category.code,
+        categoryLabel: category.label,
+        authorizedBy: input.authorizedBy.trim(),
+        openedAt: Date.now(),
+      },
+      ready: `${category.label} — no work order`,
+      readyCode: 'MATERIAL',
+    };
+    const at = Math.max(1, Math.min(input.position ?? machine.queue.length + 1, machine.queue.length + 1));
+    machine.queue.splice(at - 1, 0, job);
+
+    record(state, {
+      machineId,
+      event: 'UNPLANNED_JOB_ADDED',
+      wo: reference,
+      summary: `${category.label}: "${job.part}" (~${estimateMin} min) at position ${at}, authorised by ${job.unplanned.authorizedBy}. No production order — needs one attaching.`,
+      before,
+      after: queueWos(machine),
+    });
+    return { ok: true, message: `${reference} queued — it will show as unplanned until a work order is attached` };
+  }
+
+  /** Takes a job off a queue. D365 orders go back to the unassigned pool. */
+  function removeFromQueue(state, machineId, wo, reason) {
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const index = machine.queue.findIndex((q) => q.wo === wo);
+    if (index < 0) return { ok: false, reason: `${wo} is not in this queue` };
+    if (!reason) return { ok: false, reason: 'A removal reason is required' };
+
+    const before = queueWos(machine);
+    const [job] = machine.queue.splice(index, 1);
+
+    if (job.source !== 'UNPLANNED') {
+      state.unassignedOrders.push({
+        wo: job.wo,
+        part: job.part,
+        rev: job.rev ?? 'Rev —',
+        qty: job.qty,
+        cycleMedianMin: job.cycleMedianMin,
+        cycleSigmaMin: job.cycleSigmaMin,
+        setupMin: job.setupMin,
+        program: job.program,
+        requestedPriority: job.requestedPriority,
+        dueAt: job.dueAt,
+        routedResource: null,
+        materialStatus: job.readyCode === 'MATERIAL' ? 'UNCONFIRMED' : 'READY',
+        revisionStatus: 'RELEASED',
+        inspectionHold: job.readyCode === 'INSPECTION',
+      });
+    }
+
+    record(state, {
+      machineId,
+      event: 'JOB_REMOVED_FROM_QUEUE',
+      wo,
+      summary: `Removed ${wo} from the queue — ${reason}.`
+        + `${job.source === 'UNPLANNED' ? ' Unplanned work, discarded.' : ' Returned to the unassigned released list.'}`
+        + `${job.done ? ` It had ${job.done} of ${job.qty} finished.` : ''}`,
+      before,
+      after: queueWos(machine),
+    });
+    return { ok: true, message: `${wo} removed from ${machine.name}` };
+  }
+
+  /** Orders a machine could take on, best candidates first. */
+  function assignableOrders(state, machine) {
+    return state.unassignedOrders
+      .map((order) => ({ order, issues: assignmentIssues(state, machine, order) }))
+      .sort((a, b) => {
+        const routedA = a.order.routedResource === machine.id ? 0 : 1;
+        const routedB = b.order.routedResource === machine.id ? 0 : 1;
+        if (routedA !== routedB) return routedA - routedB;
+        return a.order.requestedPriority - b.order.requestedPriority;
+      });
+  }
+
   // -------------------------------------------- direct machinist control ---
 
   /**
@@ -829,6 +1052,13 @@
     startNextJob,
     reorderQueue,
     switchActiveJob,
+    UNPLANNED_CATEGORIES,
+    REMOVAL_REASONS,
+    assignmentIssues,
+    assignableOrders,
+    addOrderToQueue,
+    addUnplannedJob,
+    removeFromQueue,
     snoozeDowntimePrompt,
     needsDowntimeReason,
     downtimePromptDue,

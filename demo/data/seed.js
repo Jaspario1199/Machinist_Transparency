@@ -52,6 +52,47 @@
         leadership: { name: 'S. Whitfield', role: 'Leadership', title: 'Operations Manager' },
       },
 
+      /**
+       * Released D365 production orders that are not yet on any machine.
+       *
+       * This is a READ-ONLY mirror of Dynamics 365. The visibility layer never
+       * creates, edits or completes a production order — it only records which
+       * machine a released order has been put on, and in what order. Quantity,
+       * due date, revision and priority all stay D365's.
+       */
+      unassignedOrders: [
+        {
+          wo: 'WO-20540', part: 'Sensor Housing B', rev: 'Rev B', qty: 30,
+          cycleMedianMin: 7.5, cycleSigmaMin: 0.6, setupMin: 30, program: 'O20540',
+          requestedPriority: 2, dueAt: now + 34 * HOUR,
+          routedResource: 'cnc-1', materialStatus: 'READY', revisionStatus: 'RELEASED', inspectionHold: false,
+        },
+        {
+          wo: 'WO-20544', part: 'Manifold Block', rev: 'Rev A', qty: 8,
+          cycleMedianMin: 22, cycleSigmaMin: 3.0, setupMin: 65, program: 'O20544',
+          requestedPriority: 1, dueAt: now + 16 * HOUR,
+          routedResource: 'cnc-2', materialStatus: 'READY', revisionStatus: 'RELEASED', inspectionHold: false,
+        },
+        {
+          wo: 'WO-20551', part: 'Retainer Ring', rev: 'Rev D', qty: 60,
+          cycleMedianMin: 3.5, cycleSigmaMin: 0.3, setupMin: 18, program: 'O20551',
+          requestedPriority: 4, dueAt: now + 66 * HOUR,
+          routedResource: 'cnc-3', materialStatus: 'UNCONFIRMED', revisionStatus: 'RELEASED', inspectionHold: false,
+        },
+        {
+          wo: 'WO-20557', part: 'Pilot Bushing', rev: 'Rev C', qty: 25,
+          cycleMedianMin: 5.0, cycleSigmaMin: 0.4, setupMin: 22, program: 'O20557',
+          requestedPriority: 3, dueAt: now + 40 * HOUR,
+          routedResource: 'cnc-1', materialStatus: 'READY', revisionStatus: 'RELEASED', inspectionHold: true,
+        },
+        {
+          wo: 'WO-20562', part: 'Test Coupon', rev: 'Rev F (pending)', qty: 12,
+          cycleMedianMin: 4.0, cycleSigmaMin: 0.5, setupMin: 15, program: 'O20562',
+          requestedPriority: 5, dueAt: now + 90 * HOUR,
+          routedResource: 'cnc-3', materialStatus: 'READY', revisionStatus: 'PENDING', inspectionHold: false,
+        },
+      ],
+
       machines: [
         {
           id: 'cnc-1',

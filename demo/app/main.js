@@ -178,6 +178,133 @@
   }
 
 
+
+  // -------------------------------------------------------- adding work ---
+
+  /**
+   * "Add work to this machine" has two doors, because a shop has two kinds of
+   * work and pretending otherwise just pushes one of them off the record.
+   *
+   *   Released work order — the normal path. Picks an order that ALREADY EXISTS
+   *   in Dynamics 365 and records which machine will run it, in what order.
+   *   Nothing here creates or edits a production order; that stays D365's job
+   *   (docs/01 non-goals, docs/03 boundaries).
+   *
+   *   Unplanned work — rework, a tooling trial, a fixture proving run, a
+   *   sample. No production order exists. It is recorded so the machine time is
+   *   visible, badged as unplanned everywhere, counted separately for
+   *   leadership, and never sent to D365.
+   */
+  let addJobSelection = null;
+
+  function openAddJobDialog() {
+    const machine = S.selectedMachine(state);
+    addJobSelection = null;
+    $('addJobSubtitle').textContent = `${machine.name} · ${machine.queue.length} already queued`;
+    setAddJobSource('released');
+    renderAddJobDialog();
+    $('addJobDialog').showModal();
+  }
+
+  function setAddJobSource(source) {
+    const released = source === 'released';
+    $('releasedPane').hidden = !released;
+    $('unplannedPane').hidden = released;
+    $('sourceReleased').setAttribute('aria-selected', String(released));
+    $('sourceUnplanned').setAttribute('aria-selected', String(!released));
+    $('sourceReleased').classList.toggle('active', released);
+    $('sourceUnplanned').classList.toggle('active', !released);
+  }
+
+  function positionOptions(machine) {
+    return Array.from({ length: machine.queue.length + 1 }, (_, i) =>
+      `<option value="${i + 1}"${i === machine.queue.length ? ' selected' : ''}>Position ${i + 1}${i === 0 ? ' — next up' : ''}${i === machine.queue.length ? ' — end of queue' : ''}</option>`).join('');
+  }
+
+  function renderAddJobDialog() {
+    const machine = S.selectedMachine(state);
+    const candidates = S.assignableOrders(state, machine);
+
+    $('releasedList').innerHTML = candidates.length ? candidates.map(({ order, issues }) => {
+      const flags = [];
+      if (order.routedResource === machine.id) flags.push('<span class="flag">Routed here</span>');
+      issues.warnings.forEach((w) => flags.push(`<span class="flag deferred">${V.esc(w.split('.')[0])}</span>`));
+      issues.blocking.forEach(() => flags.push('<span class="flag urgent">Cannot be queued</span>'));
+
+      return `<button type="button" class="order${addJobSelection === order.wo ? ' selected' : ''}"
+        data-order="${V.esc(order.wo)}" aria-pressed="${addJobSelection === order.wo}"
+        ${issues.canAssign ? '' : 'disabled'}>
+        <span class="row"><strong>${V.esc(order.wo)} · ${V.esc(order.part)}</strong>
+          <span class="muted">${V.esc(V.PRIORITY_LABELS[order.requestedPriority] ?? '—')}</span></span>
+        <span class="muted">${V.esc(order.rev)} · ${V.esc(order.qty)} pcs · ~${V.esc(order.cycleMedianMin)} min/pc
+          · ${V.esc(order.setupMin)} min setup · due ${V.esc(V.dateTime(order.dueAt))}</span>
+        <span class="order-flags">${flags.join('')}</span>
+      </button>`;
+    }).join('') : '<p class="empty">No released orders are waiting to be assigned.</p>';
+
+    $('addJobPosition').innerHTML = positionOptions(machine);
+    $('unplannedPosition').innerHTML = positionOptions(machine);
+    $('unplannedCategory').innerHTML = S.UNPLANNED_CATEGORIES.map((c) =>
+      `<option value="${V.esc(c.code)}">${V.esc(c.label)} — ${V.esc(c.note)}</option>`).join('');
+    $('unplannedEstimate').innerHTML = [15, 30, 45, 60, 90, 120, 240]
+      .map((m) => `<option value="${m}"${m === 30 ? ' selected' : ''}>${m} minutes</option>`).join('');
+    $('unplannedAuthorisedBy').innerHTML = ['R. Delgado (machinist)', 'Shop-floor supervisor', 'T. Okafor (manufacturing engineering)', 'Quality', 'Maintenance']
+      .map((n) => `<option>${V.esc(n)}</option>`).join('');
+
+    const selected = candidates.find(({ order }) => order.wo === addJobSelection);
+    const issuesBox = $('assignIssues');
+    if (!selected) {
+      issuesBox.innerHTML = '';
+      $('addJobConfirm').disabled = true;
+      return;
+    }
+    issuesBox.innerHTML = selected.issues.warnings.length
+      ? `<p class="notice warn"><strong>Before you add this:</strong><br>${selected.issues.warnings.map(V.esc).join('<br>')}
+         <br><br>You can still run it here. Adding it records that you accepted these.</p>`
+      : '<p class="notice ok">No conflicts — routed here, material confirmed, revision released.</p>';
+    $('addJobConfirm').disabled = false;
+  }
+
+  function confirmAddOrder() {
+    if (!addJobSelection) return;
+    const result = S.addOrderToQueue(state, state.selected, addJobSelection, Number($('addJobPosition').value), true);
+    if (result.ok === false) { toast(result.reason, 'bad'); return; }
+    $('addJobDialog').close();
+    commit(result);
+  }
+
+  function confirmAddUnplanned(event) {
+    event.preventDefault();
+    const result = S.addUnplannedJob(state, state.selected, {
+      category: $('unplannedCategory').value,
+      description: $('unplannedDescription').value,
+      estimateMin: Number($('unplannedEstimate').value),
+      authorizedBy: $('unplannedAuthorisedBy').value,
+      position: Number($('unplannedPosition').value),
+    });
+    if (result.ok === false) { toast(result.reason, 'bad'); return; }
+    $('addJobDialog').close();
+    $('unplannedDescription').value = '';
+    commit(result);
+  }
+
+  async function handleRemoveFromQueue(wo) {
+    const answer = await ask({
+      title: `Remove ${wo} from this queue?`,
+      description: 'A released order goes back to the unassigned list and can be put on another machine. Unplanned work is discarded.',
+      fields: [{
+        type: 'select',
+        name: 'reason',
+        label: 'Why is it coming off?',
+        options: S.REMOVAL_REASONS.map((r) => ({ value: r, label: r })),
+      }],
+      confirmLabel: 'Remove from queue',
+      danger: true,
+    });
+    if (!answer) return;
+    commit(S.removeFromQueue(state, state.selected, wo, answer.reason));
+  }
+
   // ------------------------------------------------------ downtime popup ---
 
   /**
@@ -208,7 +335,7 @@
       return;
     }
     // Never fight another dialog the user is already in the middle of.
-    if ($('requestDialog').open || $('promptDialog').open) return;
+    if ($('requestDialog').open || $('promptDialog').open || $('addJobDialog').open) return;
 
     renderDowntimeDialog(machine);
     if (!dialog.open) dialog.showModal();
@@ -472,6 +599,9 @@
       const move = event.target.closest('[data-queue-move]');
       if (move) { commit(S.reorderQueue(state, state.selected, move.dataset.wo, move.dataset.queueMove)); return; }
 
+      const remove = event.target.closest('[data-queue-remove]');
+      if (remove) { handleRemoveFromQueue(remove.dataset.queueRemove); return; }
+
       const runNow = event.target.closest('[data-queue-run]');
       if (runNow) { handleRunNow(runNow.dataset.queueRun); return; }
 
@@ -487,6 +617,7 @@
         case 'stop': commit(S.stopMachine(state, id)); break;
         case 'resume': commit(S.resumeMachine(state, id), 'Machine resumed'); break;
         case 'request': openRequestDialog(id); break;
+        case 'add-job': openAddJobDialog(); break;
         case 'open-downtime': {
           const machine = S.selectedMachine(state);
           machine.promptSnoozedUntil = null;
@@ -508,6 +639,20 @@
     $('requestCancel').addEventListener('click', () => $('requestDialog').close());
     $('requestClose').addEventListener('click', () => $('requestDialog').close());
     $('promptCancel').addEventListener('click', () => $('promptDialog').close());
+
+    $('sourceReleased').addEventListener('click', () => setAddJobSource('released'));
+    $('sourceUnplanned').addEventListener('click', () => setAddJobSource('unplanned'));
+    $('releasedList').addEventListener('click', (event) => {
+      const order = event.target.closest('[data-order]');
+      if (!order || order.disabled) return;
+      addJobSelection = order.dataset.order;
+      renderAddJobDialog();
+    });
+    $('addJobConfirm').addEventListener('click', confirmAddOrder);
+    $('unplannedForm').addEventListener('submit', confirmAddUnplanned);
+    $('addJobClose').addEventListener('click', () => $('addJobDialog').close());
+    $('addJobCancel').addEventListener('click', () => $('addJobDialog').close());
+    $('unplannedCancel').addEventListener('click', () => $('addJobDialog').close());
 
     $('downtimeReasons').addEventListener('click', (event) => {
       const reason = event.target.closest('[data-reason]');

@@ -36,6 +36,9 @@ Status: **Open** (needs a decision) · **Blocked** (waiting on evidence) ·
 | D-13 | Where is the central VM hosted, and who patches it? | **Open** | IT | Phase 3 | Affects the security review and the BOM |
 | D-14 | What is the production downtime prompt threshold? | **Open** | Manufacturing owner | Phase 4 | The demo defaults to 180 s and makes it configurable so it can be tuned with machinists |
 | D-15 | Is the machine-tending candidate score weighting agreed by engineering? | **Open** | Manufacturing engineering | Phase 5 analytics | The demo publishes its inputs and weighting so it can be argued with rather than trusted |
+| D-19 | Who may assign a released order to a machine — machinist only, or supervisor too? | **Open** | Production supervisor | Phase 4 permissions | The demo allows the machinist; docs/05 allows a designated supervisor as well |
+| D-20 | How long may unplanned work stay without an attached work order before it escalates? | **Open** | Manufacturing owner | Phase 5 reporting | Without a limit, `UNPLANNED-nnn` becomes a permanent shadow backlog |
+| D-21 | Is a routing deviation acceptable with a recorded acknowledgement, or does it need supervisor approval? | **Open** | Manufacturing engineering | Phase 4 | The demo allows it with an audited acknowledgement |
 
 ## Resolved
 

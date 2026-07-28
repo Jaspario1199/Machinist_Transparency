@@ -628,6 +628,41 @@ select, textarea {
 textarea { min-height: 80px; resize: vertical; }
 
 
+
+/* ------------------------------------------------------------ adding work */
+
+.source-tabs { margin-bottom: 14px; }
+.source-tab { flex: 1; }
+.source-tab[aria-selected="true"] { background: var(--blue-solid); border-color: var(--blue-solid); color: #fff; }
+
+.order-list { display: grid; gap: 8px; margin: 12px 0; max-height: 320px; overflow-y: auto; }
+.order {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  width: 100%;
+  border: 2px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  color: var(--text);
+  padding: 12px 14px;
+  min-height: var(--tap);
+}
+.order.selected { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--card)); }
+.order:disabled { opacity: .55; cursor: not-allowed; }
+.order .row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.order-flags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
+.unplanned-badge {
+  font-size: .72rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--amber);
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
 /* ------------------------------------------------- machinist queue controls */
 
 /*
@@ -649,6 +684,16 @@ textarea { min-height: 80px; resize: vertical; }
 .qbtn:disabled { opacity: .35; cursor: not-allowed; }
 
 .dialog-actions-split { justify-content: space-between; align-items: center; }
+
+.queue-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
 
 @media (max-width: 900px) {
   .q { flex-wrap: wrap; }

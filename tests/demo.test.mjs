@@ -957,3 +957,146 @@ test('the popup does not fight another dialog the user is already in', async () 
     'a second modal must not open on top of one already in use',
   );
 });
+
+// ------------------------------------------ getting work onto a machine ---
+
+test('the machinist has a button to add work, and it never creates a production order', async () => {
+  const page = await open();
+  await openSections(page);
+  assert.ok(await page.$('[data-act="add-job"]'), 'there must be a way to add work to a queue');
+
+  await page.click('[data-act="add-job"]');
+  await page.waitForSelector('#addJobDialog[open]');
+  assert.match(await page.textContent('#releasedPane'), /never creates or edits the order itself/i,
+    'the dialog must state that it does not create production orders');
+
+  const poolBefore = (await getState(page)).unassignedOrders.length;
+  await page.click('.order[data-order="WO-20540"]');
+  await page.selectOption('#addJobPosition', '1');
+  await page.click('#addJobConfirm');
+
+  const state = await getState(page);
+  assert.equal(state.machines[0].queue[0].wo, 'WO-20540', 'the order must land at the chosen position');
+  assert.equal(state.machines[0].queue[0].source, 'D365');
+  assert.equal(state.unassignedOrders.length, poolBefore - 1, 'it must leave the unassigned pool');
+
+  const entry = state.audit.find((a) => a.event === 'JOB_ADDED_TO_QUEUE');
+  assert.ok(entry, 'assigning work must be audited');
+  assert.deepEqual(entry.after, state.machines[0].queue.map((q) => q.wo));
+});
+
+test('an unreleased revision cannot be queued at all', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('[data-act="add-job"]');
+  await page.waitForSelector('#addJobDialog[open]');
+
+  assert.equal(
+    await page.isDisabled('.order[data-order="WO-20562"]'),
+    true,
+    'a pending revision is a quality escape, not a warning',
+  );
+
+  const result = await page.evaluate(() =>
+    window.MT_STATE.addOrderToQueue(window.MT_DEBUG.getState(), 'cnc-1', 'WO-20562', 1, true));
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not released in Bluestar/);
+});
+
+test('routing and material conflicts warn but do not block, and the acceptance is recorded', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('[data-act="add-job"]');
+  await page.waitForSelector('#addJobDialog[open]');
+
+  await page.click('.order[data-order="WO-20544"]'); // routed to CNC Mill 2
+  const notice = await page.textContent('#assignIssues');
+  assert.match(notice, /routing puts this on CNC Mill 2/);
+  assert.match(notice, /You can still run it here/);
+  assert.equal(await page.isDisabled('#addJobConfirm'), false, 'a deviation must remain the machinist\'s call');
+
+  await page.click('#addJobConfirm');
+  const entry = (await getState(page)).audit.find((a) => a.event === 'JOB_ADDED_TO_QUEUE');
+  assert.match(entry.summary, /accepted with: The D365 routing puts this on CNC Mill 2/);
+});
+
+test('unplanned work can be recorded, is badged as having no order, and needs a name against it', async () => {
+  const page = await open();
+  await openSections(page);
+  await page.click('[data-act="add-job"]');
+  await page.waitForSelector('#addJobDialog[open]');
+  await page.click('#sourceUnplanned');
+
+  await page.click('#unplannedConfirm');
+  assert.match((await page.textContent('#toast')).trim(), /needs a one-line description/,
+    'unplanned work without a description must be refused');
+
+  await page.selectOption('#unplannedCategory', 'REWORK');
+  await page.fill('#unplannedDescription', 'Re-cut bore on 6 rejected Sensor Housing A');
+  await page.selectOption('#unplannedEstimate', '60');
+  await page.selectOption('#unplannedPosition', '1');
+  await page.click('#unplannedConfirm');
+
+  const state = await getState(page);
+  const job = state.machines[0].queue[0];
+  assert.match(job.wo, /^UNPLANNED-\d{3}$/, 'unplanned work gets a local reference, not a work-order number');
+  assert.equal(job.source, 'UNPLANNED');
+  assert.equal(job.unplanned.categoryLabel, 'Rework / salvage');
+  assert.ok(job.unplanned.authorizedBy, 'someone must be named against it');
+
+  const entry = state.audit.find((a) => a.event === 'UNPLANNED_JOB_ADDED');
+  assert.match(entry.summary, /No production order — needs one attaching/);
+
+  await openSections(page);
+  assert.match(await page.textContent('#panel .unplanned-badge'), /no work order/,
+    'unplanned work must be visibly unplanned in the queue');
+});
+
+test('leadership sees unplanned load and the unassigned backlog rather than having them buried', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    s.machines[0].queue.unshift({
+      wo: 'UNPLANNED-001', part: 'Fixture proving', qty: 1, done: 0,
+      cycleMedianMin: 30, cycleSigmaMin: 5, setupMin: 5, program: '—',
+      requestedPriority: 3, dueAt: Date.now(), source: 'UNPLANNED',
+      unplanned: { category: 'FIXTURE', categoryLabel: 'Fixture proving', authorizedBy: 'Supervisor', openedAt: Date.now() },
+      ready: 'Fixture proving — no work order', readyCode: 'MATERIAL',
+    });
+    window.MT_DEBUG.setState(s);
+  });
+  await page.click('[data-role="leadership"]');
+  const metrics = await page.$$eval('.metric', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
+  assert.ok(metrics.includes('Unplannedwork,noorder1'), `got ${JSON.stringify(metrics)}`);
+  assert.ok(metrics.some((m) => m.startsWith('Released,notyetonamachine')), `got ${JSON.stringify(metrics)}`);
+});
+
+test('removing a released order returns it to the unassigned pool, with a reason', async () => {
+  const page = await open();
+  await openSections(page);
+  const poolBefore = (await getState(page)).unassignedOrders.length;
+
+  await page.click('[data-queue-remove="WO-20503"]');
+  await page.waitForSelector('#promptDialog[open]');
+  await page.selectOption('#promptFields select', 'Moved to another machine');
+  await page.click('#promptConfirm');
+
+  const state = await getState(page);
+  assert.ok(!state.machines[0].queue.some((q) => q.wo === 'WO-20503'), 'it must leave the queue');
+  assert.equal(state.unassignedOrders.length, poolBefore + 1, 'a D365 order must go back to the pool, not vanish');
+  assert.ok(state.unassignedOrders.some((o) => o.wo === 'WO-20503'));
+
+  const entry = state.audit.find((a) => a.event === 'JOB_REMOVED_FROM_QUEUE');
+  assert.match(entry.summary, /Moved to another machine/);
+  assert.match(entry.summary, /Returned to the unassigned released list/);
+});
+
+test('only the machinist can add or remove work', async () => {
+  const page = await open();
+  for (const role of ['engineer', 'leadership']) {
+    await page.click(`[data-role="${role}"]`);
+    await openSections(page);
+    assert.equal((await page.$$('[data-act="add-job"]')).length, 0, `${role} must not add work directly`);
+    assert.equal((await page.$$('[data-queue-remove]')).length, 0, `${role} must not remove work directly`);
+  }
+});
