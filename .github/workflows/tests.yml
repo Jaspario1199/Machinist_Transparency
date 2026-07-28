@@ -2,7 +2,6 @@ name: tests
 
 on:
   push:
-    branches: ['**']
   pull_request:
 
 jobs:
@@ -24,36 +23,10 @@ jobs:
       - name: Fail if the generated demo config is stale
         run: |
           node scripts/build-demo-config.mjs
-          git diff --exit-code demo/data/downtime-reasons.js \
-            || (echo "::error::demo/data/downtime-reasons.js is out of date. Run: node scripts/build-demo-config.mjs" && exit 1)
+          git diff --exit-code demo/data/downtime-reasons.js
+
+      - name: Scan for credentials and production addresses
+        run: bash scripts/scan-secrets.sh
 
       - name: Run tests
         run: npm test
-
-  secrets:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # CONTRIBUTING.md rule 5: never commit credentials, production IP
-      # addresses, customer data or controlled drawings.
-      - name: Scan for credentials and production addresses
-        run: |
-          set +e
-          FOUND=0
-
-          # Private-range IPv4 addresses outside documentation placeholders.
-          MATCHES=$(grep -rInE '\b(10\.[0-9]{1,3}|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b' \
-            --exclude-dir=.git --exclude-dir=node_modules . )
-          if [ -n "$MATCHES" ]; then
-            echo "::error::Possible production IP address committed:"; echo "$MATCHES"; FOUND=1
-          fi
-
-          # Obvious credential assignments.
-          MATCHES=$(grep -rInE '(password|passwd|secret|api[_-]?key|token)[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{6,}' \
-            --exclude-dir=.git --exclude-dir=node_modules --exclude=*.yml . )
-          if [ -n "$MATCHES" ]; then
-            echo "::error::Possible credential committed:"; echo "$MATCHES"; FOUND=1
-          fi
-
-          exit $FOUND
