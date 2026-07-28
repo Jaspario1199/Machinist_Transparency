@@ -79,13 +79,18 @@
   --red-solid: #b3202c;
 
   /* ------------------------------------------------------------ SURFACES --
-   * White cards on the site's light-grey panel colour, separated by borders.
+   * White page, matching the site. Grey is used only for inset panels — the
+   * same way the site uses it for the "By Technology" sidebar — so separation
+   * comes from borders rather than from a background change. That is why
+   * --border-strong exists: with a white card on a white page, the card
+   * outline is the only thing identifying it, and an outline that identifies
+   * an interactive component needs 3:1 (WCAG 1.4.11).
    */
-  --bg: #f8f8f8;
+  --bg: #ffffff;
   --card: #ffffff;
-  --soft: #eaeaea;
-  --simbar-bg: #eaeaea;
-  --border: #e0e0e0;
+  --soft: #f8f8f8;               /* inset panels, stat bands, job cards       */
+  --simbar-bg: #eaeaea;          /* chrome, deliberately not content-white    */
+  --border: #e0e0e0;             /* decorative separators                     */
   --border-strong: #8a8a8a;      /* 3.45:1 — interactive outlines need 3:1    */
   --text: #333333;
   --muted: #666666;              /* 5.74:1 on white, 4.77:1 on --soft         */
@@ -390,7 +395,7 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
   gap: 6px;
   text-align: left;
   padding: 14px;
-  border: 2px solid var(--border);
+  border: 2px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--card);
   color: var(--text);
@@ -732,7 +737,7 @@ legend { font-size: .8rem; font-weight: 800; color: var(--muted); text-transform
   display: grid;
   gap: 4px;
   text-align: left;
-  border: 2px solid var(--border);
+  border: 2px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--card);
   color: var(--text);
@@ -818,7 +823,7 @@ textarea { min-height: 80px; resize: vertical; }
   gap: 4px;
   text-align: left;
   width: 100%;
-  border: 2px solid var(--border);
+  border: 2px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--card);
   color: var(--text);
