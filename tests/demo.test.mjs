@@ -716,9 +716,48 @@ test('the page never scrolls horizontally', async () => {
   }
 });
 
-test('the page states that it measures processes rather than operators', async () => {
+/*
+ * The header used to carry a line promising that the system measures processes
+ * and not operators. It was removed as visual clutter — but the promise it made
+ * is a documented mitigation for R-01, so the guarantee is now tested directly
+ * rather than asserted in copy. A claim in a banner is worth less than a
+ * property of the code, and this is the property.
+ */
+test('no analytic aggregates by person', async () => {
   const page = await open();
-  assert.match(await page.textContent('header'), /not.*individual operator performance/is);
+  const keys = await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[0];
+    const A = window.MT_ANALYTICS;
+    const now = Date.now();
+    const outputs = [
+      A.downtimePareto(s, m.id, now),
+      A.tendingScore(m, s.shiftStart, now),
+      A.cycleDistribution(m),
+      A.etaForActiveJob(s, m),
+      A.queueProjection(s, m),
+      A.dueDateRisk(s, m, now),
+    ];
+    const collect = (v, acc = []) => {
+      if (Array.isArray(v)) v.forEach((x) => collect(x, acc));
+      else if (v && typeof v === 'object') {
+        Object.entries(v).forEach(([k, x]) => { acc.push(k); collect(x, acc); });
+      }
+      return acc;
+    };
+    return collect(outputs);
+  });
+
+  for (const term of ['operator', 'actor', 'person', 'employee', 'machinist', 'worker']) {
+    const hit = keys.find((k) => k.toLowerCase().includes(term));
+    assert.equal(hit, undefined,
+      `analytics output has a "${hit}" key — measurement must be keyed on machines and processes, never on people`);
+  }
+
+  // Names still appear as attribution — who decided what — which is the audit
+  // trail doing its job. What must not exist is a metric computed per person.
+  const audit = await page.evaluate(() => window.MT_DEBUG.getState().audit.some((a) => a.actor));
+  assert.ok(audit, 'decisions stay attributable; that is different from scoring somebody');
 });
 
 test('the demo declares that nothing is connected to a real system', async () => {

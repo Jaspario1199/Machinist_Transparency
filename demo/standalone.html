@@ -48,10 +48,7 @@
   /* On-brand text: everything sitting on the blue band. */
   --on-brand: #ffffff;
   --on-brand-soft: #a4d3ff;      /* tagline — 5.48:1 on --brand              */
-  --on-brand-body: #ffffff;      /* the promise statement                    */
   --on-brand-muted: #a4d3ff;     /* "signed in as"                           */
-  --on-brand-veil: #ffffff1f;    /* translucent panel on the header band     */
-  --on-brand-rule: #a4d3ff;      /* accent rule on the header band           */
   --on-brand-border: #ffffff8c;  /* outline buttons on the header band       */
 
   /* ------------------------------------------------------------ TYPEFACE -- */
@@ -312,16 +309,6 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
   border-radius: var(--radius);
 }
 .tagline { margin: 2px 0 0; color: var(--on-brand-soft); }
-.promise {
-  margin: 8px 0 0;
-  font-size: .84rem;
-  color: var(--on-brand-body);
-  background: var(--on-brand-veil);
-  border-left: 3px solid var(--on-brand-rule);
-  padding: 6px 10px;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  max-width: 56ch;
-}
 
 .header-right { display: grid; gap: 10px; justify-items: end; }
 .identity { display: grid; gap: 4px; justify-items: end; text-align: right; }
@@ -1018,7 +1005,6 @@ textarea { min-height: 80px; resize: vertical; }
   .header { gap: 10px; }
   .brand h1 { font-size: 1.15rem; }
   .tagline { display: none; }
-  .promise { font-size: .76rem; padding: 4px 8px; margin-top: 6px; max-width: none; }
   .header-right { flex: 1 1 100%; justify-items: stretch; gap: 6px; }
   .identity { grid-auto-flow: column; justify-items: start; justify-content: start; gap: 6px; align-items: baseline; text-align: left; }
   .identity .small { display: none; }
@@ -1088,8 +1074,6 @@ textarea { min-height: 80px; resize: vertical; }
       <span class="brand-eyebrow">Rochester Sensors</span>
       <h1>Machinist Transparency</h1>
       <p class="tagline">CNC visibility and controlled queue changes</p>
-      <p class="promise">Measures machines and processes — <strong>not</strong> individual operator performance. No
-        operator ranking, no productivity scoring.</p>
     </div>
     <div class="header-right">
       <div class="identity">

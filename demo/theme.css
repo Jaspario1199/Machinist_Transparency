@@ -39,10 +39,7 @@
   /* On-brand text: everything sitting on the blue band. */
   --on-brand: #ffffff;
   --on-brand-soft: #a4d3ff;      /* tagline — 5.48:1 on --brand              */
-  --on-brand-body: #ffffff;      /* the promise statement                    */
   --on-brand-muted: #a4d3ff;     /* "signed in as"                           */
-  --on-brand-veil: #ffffff1f;    /* translucent panel on the header band     */
-  --on-brand-rule: #a4d3ff;      /* accent rule on the header band           */
   --on-brand-border: #ffffff8c;  /* outline buttons on the header band       */
 
   /* ------------------------------------------------------------ TYPEFACE -- */
