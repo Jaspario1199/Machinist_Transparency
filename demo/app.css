@@ -120,6 +120,7 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
   background: transparent;
   color: var(--on-brand);
   border-color: var(--on-brand-border);
+  white-space: nowrap;
 }
 .btn.ghost:disabled { opacity: .5; }
 
@@ -192,11 +193,15 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 
 /* ----------------------------------------------------------------- metrics */
 
+/* Sits below the machine strip as a collapsed panel, not a dashboard header.
+ * Margin only — a display rule here would beat the UA's [hidden] and leak the
+ * leadership board into the machinist view. */
+#metrics { margin-bottom: 18px; }
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
-  margin-bottom: 18px;
 }
 .metric {
   background: var(--card);
@@ -308,6 +313,8 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
   gap: 10px;
 }
 .section > summary .meta { color: var(--muted); font-size: .82rem; font-weight: 600; }
+/* An exception named on a collapsed panel must not read as quiet metadata. */
+.section > summary .meta.meta-bad { color: var(--red); font-weight: 700; }
 .section-body { padding: 14px; border-top: 1px solid var(--border); display: grid; gap: 12px; }
 
 /* --------------------------------------------------------------- job card */

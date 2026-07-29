@@ -86,8 +86,6 @@
     </div>
   </section>
 
-  <section id="metrics" class="metrics" aria-label="Shop-wide status" hidden></section>
-
   <section aria-labelledby="chooseTitle">
     <div class="choose">
       <h3 id="chooseTitle">Choose your CNC</h3>
@@ -95,6 +93,17 @@
     </div>
     <div class="machines" id="machines"></div>
   </section>
+
+  <!--
+    Shop-wide counts sit BELOW the machines, and behind a disclosure.
+
+    The machines and their work are the product; eleven aggregate tiles above
+    them turned the first screen into a dashboard and pushed the actual shop
+    off the fold. The summary line on the closed disclosure still names
+    anything outstanding, so nothing urgent is hidden by collapsing it — see
+    the note in views.js.
+  -->
+  <section id="metrics" aria-label="Shop-wide status" hidden></section>
 
   <section class="panel" id="panel" role="tabpanel" aria-labelledby="tab-machinist" tabindex="-1"></section>
 

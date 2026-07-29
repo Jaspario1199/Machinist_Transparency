@@ -48,11 +48,11 @@
    * Disclosure section whose open/closed state lives in the store, so a
    * re-render never discards what the user expanded.
    */
-  function section(state, key, title, meta, body, defaultOpen) {
+  function section(state, key, title, meta, body, defaultOpen, metaKind = '') {
     const stored = state.ui.sections[key];
     const open = stored === undefined ? defaultOpen : stored;
     return `<details class="section" data-section="${esc(key)}"${open ? ' open' : ''}>
-      <summary><span>${esc(title)}</span><span class="meta">${esc(meta)}</span></summary>
+      <summary><span>${esc(title)}</span><span class="meta ${esc(metaKind)}">${esc(meta)}</span></summary>
       <div class="section-body">${body}</div>
     </details>`;
   }
@@ -703,8 +703,42 @@
       { label: 'Unplanned work, no order', value: unplannedCount, kind: unplannedCount ? 'warn' : '' },
       { label: 'Released, not yet on a machine', value: state.unassignedOrders.length },
     ];
-    return tiles.map((t) => `<div class="metric ${esc(t.kind ?? '')}">
-      <div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div></div>`).join('');
+
+    /*
+     * The tiles live behind a disclosure, below the machines.
+     *
+     * Eleven aggregate counts above the machine strip made the first thing a
+     * viewer saw a dashboard rather than a shop. The machines are the product;
+     * the counts are context for them.
+     *
+     * Collapsing them is only safe because nothing urgent depends on the grid
+     * being open. A stoppage nobody has explained, an approval that lapsed and
+     * a request waiting on a decision are the whole point of the board, and
+     * they stay legible in two places without opening anything: the summary
+     * line names them in red, and the machine cards above carry the same flags
+     * per machine. The grid is the detail behind that, so it starts closed and
+     * stays wherever the viewer leaves it.
+     */
+    const outstanding = [
+      unclassified && `${unclassified} unclassified stoppage${unclassified === 1 ? '' : 's'}`,
+      lapsed && `${lapsed} approval${lapsed === 1 ? '' : 's'} lapsed`,
+      pending && `${pending} awaiting your machinists`,
+      atRisk && `${atRisk} at due-date risk`,
+      blockers && `${blockers} open blocker${blockers === 1 ? '' : 's'}`,
+    ].filter(Boolean);
+
+    const grid = `<div class="metrics">${tiles.map((t) => `<div class="metric ${esc(t.kind ?? '')}">
+      <div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div></div>`).join('')}</div>`;
+
+    return section(
+      state,
+      'shop-overview',
+      'Shop overview',
+      outstanding.length ? outstanding.join(' · ') : 'nothing outstanding',
+      grid,
+      false,
+      outstanding.length ? 'meta-bad' : '',
+    );
   }
 
   window.MT_VIEWS = {

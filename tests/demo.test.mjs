@@ -1590,3 +1590,41 @@ test('a destructive control cannot be reached while a decision dialog is open', 
   });
   assert.equal(reachable, false, 'Reset must be inert behind the modal, not clickable through it');
 });
+
+// ---------------------------------------------------------------- layout ---
+
+test('machines come before shop-wide aggregates, which start collapsed', async () => {
+  const page = await open();
+  await page.click('[data-role="leadership"]');
+
+  const order = await page.evaluate(() => {
+    const machines = document.getElementById('machines');
+    const metrics = document.getElementById('metrics');
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4
+    return (machines.compareDocumentPosition(metrics) & 4) !== 0;
+  });
+  assert.ok(order, 'the machines are the product; the aggregate board is context for them');
+
+  const open_ = await page.evaluate(() => document.querySelector('#metrics details').open);
+  assert.equal(open_, false, 'eleven tiles should not be the first thing on the screen');
+
+  // Collapsing is only safe if the exceptions stay legible while it is closed.
+  const summary = await page.textContent('#metrics summary');
+  assert.match(summary, /Shop overview/);
+  assert.match(summary, /unclassified stoppage/i);
+  assert.match(summary, /awaiting your machinists/i);
+});
+
+test('the shop-wide board never appears outside leadership', async () => {
+  const page = await open();
+  for (const role of ['machinist', 'engineer']) {
+    await page.click(`[data-role="${role}"]`);
+    const shown = await page.evaluate(() => {
+      const el = document.getElementById('metrics');
+      return el.getBoundingClientRect().height > 0;
+    });
+    assert.equal(shown, false, `${role} must not see the leadership board — a display rule can beat [hidden]`);
+  }
+  await page.click('[data-role="leadership"]');
+  assert.ok(await page.evaluate(() => document.getElementById('metrics').getBoundingClientRect().height > 0));
+});

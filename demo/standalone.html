@@ -308,6 +308,7 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
   background: transparent;
   color: var(--on-brand);
   border-color: var(--on-brand-border);
+  white-space: nowrap;
 }
 .btn.ghost:disabled { opacity: .5; }
 
@@ -380,11 +381,15 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 
 /* ----------------------------------------------------------------- metrics */
 
+/* Sits below the machine strip as a collapsed panel, not a dashboard header.
+ * Margin only — a display rule here would beat the UA's [hidden] and leak the
+ * leadership board into the machinist view. */
+#metrics { margin-bottom: 18px; }
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
-  margin-bottom: 18px;
 }
 .metric {
   background: var(--card);
@@ -496,6 +501,8 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
   gap: 10px;
 }
 .section > summary .meta { color: var(--muted); font-size: .82rem; font-weight: 600; }
+/* An exception named on a collapsed panel must not read as quiet metadata. */
+.section > summary .meta.meta-bad { color: var(--red); font-weight: 700; }
 .section-body { padding: 14px; border-top: 1px solid var(--border); display: grid; gap: 12px; }
 
 /* --------------------------------------------------------------- job card */
@@ -1080,8 +1087,6 @@ textarea { min-height: 80px; resize: vertical; }
     </div>
   </section>
 
-  <section id="metrics" class="metrics" aria-label="Shop-wide status" hidden></section>
-
   <section aria-labelledby="chooseTitle">
     <div class="choose">
       <h3 id="chooseTitle">Choose your CNC</h3>
@@ -1089,6 +1094,17 @@ textarea { min-height: 80px; resize: vertical; }
     </div>
     <div class="machines" id="machines"></div>
   </section>
+
+  <!--
+    Shop-wide counts sit BELOW the machines, and behind a disclosure.
+
+    The machines and their work are the product; eleven aggregate tiles above
+    them turned the first screen into a dashboard and pushed the actual shop
+    off the fold. The summary line on the closed disclosure still names
+    anything outstanding, so nothing urgent is hidden by collapsing it — see
+    the note in views.js.
+  -->
+  <section id="metrics" aria-label="Shop-wide status" hidden></section>
 
   <section class="panel" id="panel" role="tabpanel" aria-labelledby="tab-machinist" tabindex="-1"></section>
 
@@ -3673,11 +3689,11 @@ window.DOWNTIME_REASONS = [
    * Disclosure section whose open/closed state lives in the store, so a
    * re-render never discards what the user expanded.
    */
-  function section(state, key, title, meta, body, defaultOpen) {
+  function section(state, key, title, meta, body, defaultOpen, metaKind = '') {
     const stored = state.ui.sections[key];
     const open = stored === undefined ? defaultOpen : stored;
     return `<details class="section" data-section="${esc(key)}"${open ? ' open' : ''}>
-      <summary><span>${esc(title)}</span><span class="meta">${esc(meta)}</span></summary>
+      <summary><span>${esc(title)}</span><span class="meta ${esc(metaKind)}">${esc(meta)}</span></summary>
       <div class="section-body">${body}</div>
     </details>`;
   }
@@ -4328,8 +4344,42 @@ window.DOWNTIME_REASONS = [
       { label: 'Unplanned work, no order', value: unplannedCount, kind: unplannedCount ? 'warn' : '' },
       { label: 'Released, not yet on a machine', value: state.unassignedOrders.length },
     ];
-    return tiles.map((t) => `<div class="metric ${esc(t.kind ?? '')}">
-      <div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div></div>`).join('');
+
+    /*
+     * The tiles live behind a disclosure, below the machines.
+     *
+     * Eleven aggregate counts above the machine strip made the first thing a
+     * viewer saw a dashboard rather than a shop. The machines are the product;
+     * the counts are context for them.
+     *
+     * Collapsing them is only safe because nothing urgent depends on the grid
+     * being open. A stoppage nobody has explained, an approval that lapsed and
+     * a request waiting on a decision are the whole point of the board, and
+     * they stay legible in two places without opening anything: the summary
+     * line names them in red, and the machine cards above carry the same flags
+     * per machine. The grid is the detail behind that, so it starts closed and
+     * stays wherever the viewer leaves it.
+     */
+    const outstanding = [
+      unclassified && `${unclassified} unclassified stoppage${unclassified === 1 ? '' : 's'}`,
+      lapsed && `${lapsed} approval${lapsed === 1 ? '' : 's'} lapsed`,
+      pending && `${pending} awaiting your machinists`,
+      atRisk && `${atRisk} at due-date risk`,
+      blockers && `${blockers} open blocker${blockers === 1 ? '' : 's'}`,
+    ].filter(Boolean);
+
+    const grid = `<div class="metrics">${tiles.map((t) => `<div class="metric ${esc(t.kind ?? '')}">
+      <div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div></div>`).join('')}</div>`;
+
+    return section(
+      state,
+      'shop-overview',
+      'Shop overview',
+      outstanding.length ? outstanding.join(' · ') : 'nothing outstanding',
+      grid,
+      false,
+      outstanding.length ? 'meta-bad' : '',
+    );
   }
 
   window.MT_VIEWS = {
