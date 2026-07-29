@@ -344,7 +344,13 @@ test('a classified stoppage survives the machine resuming', async () => {
   await page.waitForSelector('#promptDialog[open]');
   await page.fill('#promptFields textarea', 'Insert change');
   await page.click('#promptConfirm');
-  await page.click('[data-act="resume"]');
+  // Resuming is not a button any more — the collector reports it. In the demo
+  // the simulation bar is the stand-in collector, so that is the honest path.
+  await page.click('#runStateButton');
+  await page.waitForSelector('#promptDialog[open]');
+  await page.selectOption('#promptFields select[name="machineId"]', 'cnc-3');
+  await page.selectOption('#promptFields select[name="running"]', 'true');
+  await page.click('#promptConfirm');
 
   const machine = (await getState(page)).machines.find((m) => m.id === 'cnc-3');
   const recorded = machine.history.downtimes.find((d) => d.note === 'Insert change');
@@ -465,7 +471,7 @@ test('collector health is surfaced and degrades when the collector drops', async
 test('a re-render preserves expanded sections and keyboard focus', async () => {
   const page = await open();
   await page.click('#panel details[data-section^="m-audit"] summary');
-  await page.focus('[data-focus-key="stop"]');
+  await page.focus('[data-focus-key="planned-stop"]');
   const openedBefore = await page.$$eval('#panel details', (els) => els.map((d) => d.open));
 
   await page.evaluate(() => window.MT_DEBUG.tick(1));
@@ -473,7 +479,7 @@ test('a re-render preserves expanded sections and keyboard focus', async () => {
   const openedAfter = await page.$$eval('#panel details', (els) => els.map((d) => d.open));
   assert.deepEqual(openedAfter, openedBefore, 'a telemetry tick must not collapse what the user opened');
   const focused = await page.evaluate(() => document.activeElement?.dataset?.focusKey ?? null);
-  assert.equal(focused, 'stop', 'focus must survive a re-render');
+  assert.equal(focused, 'planned-stop', 'focus must survive a re-render');
 });
 
 test('user-supplied text is escaped, not executed', async () => {
@@ -1411,7 +1417,8 @@ test('nobody signed in means the terminal cannot record a decision', async () =>
   const page = await open();
   await page.click('#signOutButton');
 
-  const result = await page.evaluate(() => window.MT_STATE.stopMachine(window.MT_DEBUG.getState(), 'cnc-1'));
+  const result = await page.evaluate(() =>
+    window.MT_STATE.flagPlannedStop(window.MT_DEBUG.getState(), 'cnc-1', 'TOOLING', 'insert change'));
   assert.equal(result.ok, false, 'an unattended terminal must not be able to act');
   assert.match(result.reason, /signed in/i);
 
@@ -1693,4 +1700,75 @@ test('the simulation controls sit below the work, not above it', async () => {
   // Still reachable — a reviewer cannot otherwise force a fault or compress a shift.
   assert.ok(await page.$('#faultButton'));
   assert.ok(await page.$('#simSpeed'));
+});
+
+// ------------------------------------------- read-only toward the machine ---
+//
+// "The platform remains read-only toward CNCs" is an acceptance criterion in
+// both docs/09 and docs/10. It is also the thing a controls engineer will ask
+// about before allowing the connection, so it gets tested rather than trusted.
+
+test('no role can command a machine to start or stop', async () => {
+  const page = await open();
+  const acts = await page.$$eval('[data-act]', (els) => els.map((e) => e.dataset.act));
+  for (const banned of ['stop', 'resume', 'start']) {
+    assert.ok(!acts.includes(banned),
+      `the machinist panel offers "${banned}" — a visibility sidecar must never appear to command a spindle`);
+  }
+  assert.equal(await page.evaluate(() => typeof window.MT_STATE.stopMachine), 'undefined');
+  assert.equal(await page.evaluate(() => typeof window.MT_STATE.resumeMachine), 'undefined');
+
+  // Execution state is not a permission anybody holds — it is not a user action.
+  const perms = await page.evaluate(() => Object.values(window.MT_STATE.PERMISSIONS).flat());
+  assert.ok(!perms.some((p) => /^(stop|resume|start)Machine$/.test(p)));
+});
+
+test('an observed state change is attributed to the collector, not to a person', async () => {
+  const page = await open();
+  await page.evaluate(() => window.MT_STATE.setMachineRunning(window.MT_DEBUG.getState(), 'cnc-1', false));
+  const state = await getState(page);
+  const row = state.audit.filter((a) => a.machineId === 'cnc-1').at(-1);
+  assert.equal(row.actor, 'Collector');
+  assert.equal(row.role, 'System');
+  assert.match(row.summary, /reported by the collector/i,
+    'the audit trail must not imply a machinist stopped the spindle from this screen');
+});
+
+test('a stop declared in advance is classified on arrival and nobody is prompted', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    window.MT_STATE.flagPlannedStop(s, 'cnc-1', 'TOOLING', 'Indexing the boring bar');
+    window.MT_STATE.setMachineRunning(s, 'cnc-1', false);
+  });
+  const machine = (await getState(page)).machines.find((m) => m.id === 'cnc-1');
+  assert.equal(machine.downtime.code, 'TOOLING');
+  assert.equal(machine.downtime.preClassified, true);
+  assert.equal(machine.plannedStop, null, 'the declaration is consumed, not left armed');
+
+  // The whole point: no prompt, because the reason was already given.
+  const prompted = await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    return window.MT_STATE.needsDowntimeReason(s, s.machines.find((m) => m.id === 'cnc-1'));
+  });
+  assert.equal(prompted, false, 'chasing someone for a reason they already gave is how the prompt gets ignored');
+
+  // It still routes to the owning group like any other classified stoppage.
+  const state = await getState(page);
+  assert.ok(state.blockers.some((b) => b.machineId === 'cnc-1' && b.code === 'TOOLING' && b.status === 'OPEN'));
+  assert.ok(state.audit.some((a) => a.event === 'DOWNTIME_PRECLASSIFIED'));
+});
+
+test('a stale declaration does not explain a stop that happens much later', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    window.MT_STATE.flagPlannedStop(s, 'cnc-1', 'TOOLING', 'Indexing the boring bar');
+    // Two hours pass; a tool change flagged this morning is not a reason now.
+    s.machines.find((m) => m.id === 'cnc-1').plannedStop.expiresAt = Date.now() - 1;
+    window.MT_STATE.setMachineRunning(s, 'cnc-1', false);
+  });
+  const machine = (await getState(page)).machines.find((m) => m.id === 'cnc-1');
+  assert.equal(machine.downtime, null, 'an expired declaration must not auto-classify');
+  assert.equal(machine.plannedStop, null);
 });

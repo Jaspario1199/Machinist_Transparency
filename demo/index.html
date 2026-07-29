@@ -103,6 +103,15 @@
       </div>
       <div class="sim-actions">
         <button class="btn small" id="simToggle" aria-pressed="false">Pause telemetry</button>
+      <!--
+        Starting and stopping a machine belongs HERE and nowhere else.
+
+        With no real CNC connected, something has to stand in for the execution
+        state a collector would read. That stand-in is the simulation bar, which
+        is exactly what it says it is. Putting the same control in the machinist
+        panel would have implied the product commands the spindle, which it
+        never does — see the note above the machinist controls in views.js.
+      -->
         <label class="inline">Clock
           <select id="simSpeed">
             <option value="0.25">0.25 min/s</option>
@@ -119,6 +128,7 @@
             <option value="600">600 s</option>
           </select>
         </label>
+        <button class="btn small" id="runStateButton">Start / stop a machine</button>
         <button class="btn small" id="faultButton">Inject fault</button>
         <button class="btn small" id="collectorToggle">Simulate collector dropout</button>
         <button class="btn small" id="exportButton">Export audit CSV</button>

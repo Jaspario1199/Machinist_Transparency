@@ -59,6 +59,7 @@ otherwise take a shift to observe:
 | Pause / resume telemetry | The board advances on its own; pause it to read |
 | Clock speed | Compress a shift into a few minutes |
 | Downtime prompt after | Tune the threshold and see that short stops are *not* chased |
+| Start / stop a machine | Stand-in for the execution state a collector reads. **This is not a product feature and never will be** — see below |
 | Inject fault | Reach the `FAULT` state on demand |
 | Simulate collector dropout | Verify that stale data is labelled, never silently shown as current |
 | Export audit CSV | The exportable-audit requirement in `docs/01` |
@@ -69,7 +70,11 @@ otherwise take a shift to observe:
 ### Machinist
 
 - Select a CNC; everything below applies to that machine only.
-- Confirm setup complete, stop, resume, or load the next job.
+- Confirm setup complete, or load the next job.
+- **Flag a planned stop.** The one thing the sensors cannot know is *why*, and
+  in advance. Declaring "the next stop is a tool change" means the stoppage is
+  classified the moment the collector sees it and nobody is chased for a reason
+  they already gave. It changes nothing on the machine.
 - Reorder the approved queue directly — up, down, straight to the top, run one
   now, or take one off. No request, no approval; still audited.
 - Release or reject the first article when a job holds for one. Rejecting
@@ -100,6 +105,31 @@ otherwise take a shift to observe:
 - Per-machine due-date risk, blockers with their owning group, and the full
   attributable audit trail.
 - Requests a priority change; never applies one.
+
+## The platform never commands a machine
+
+Machine state is **observed, never set**. Running, stopped, faulted and ready
+all arrive from the collector — MTConnect `Execution`, `Availability` and
+`ControllerMode`, a FANUC FOCAS equivalent, or a stack-light relay at the
+bottom of the `docs/06` hierarchy. Nobody presses anything for the board to
+follow the spindle, and there is no code path from a user action to a machine
+state: `setMachineRunning` takes no actor, holds no permission, and writes its
+audit row as **Collector / System**.
+
+Earlier builds had "Stop machine" and "Resume machine" buttons in the machinist
+panel. They were wrong twice over. They contradicted an acceptance criterion
+carried in both `docs/09` and `docs/10` — *the platform remains read-only
+toward CNCs* — and they could lie: pressing Resume put `PRODUCTION` on the
+board whether or not the spindle was turning.
+
+The start/stop control in the simulation bar exists **only** because there is
+no CNC connected to this demo. Something has to stand in for the execution
+state a collector would read, and the simulation bar is the honest place for
+it, because that bar is the stand-in collector. Tests fail the build if a
+`stop`, `start` or `resume` action reappears in a role panel.
+
+What the machinist *can* record is the thing no sensor knows: that the next
+stop is planned, and what it is for.
 
 ## Governance rules the demo enforces
 

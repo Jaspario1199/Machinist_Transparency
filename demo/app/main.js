@@ -577,6 +577,72 @@
     commit(result, `Recorded as ${reason.label} — ${reason.owner} notified`);
   }
 
+  /**
+   * Declare the reason for a stop that has not happened yet.
+   *
+   * The reasons offered are the same agreed list from
+   * `config/downtime-reasons.csv` that the reactive prompt uses, so a
+   * pre-classified stop and an answered one are the same category of record and
+   * the Pareto does not gain a private vocabulary.
+   */
+  async function handlePlannedStop() {
+    const machine = S.selectedMachine(state);
+    const answer = await ask({
+      title: `Flag a planned stop on ${machine.name}`,
+      description: 'This changes nothing on the machine and sends nothing anywhere. It arms a reason, so when the '
+        + 'collector next sees this machine stop it is recorded as that and you are not asked for a reason you have '
+        + 'already given. It lapses after 30 minutes.',
+      fields: [
+        {
+          type: 'select',
+          name: 'code',
+          label: 'What is the stop for?',
+          options: window.DOWNTIME_REASONS.map((r) => ({
+            value: r.code,
+            label: `${r.label} — ${r.owner}${r.noteRequired ? ' (note required)' : ''}`,
+          })),
+        },
+        { type: 'textarea', name: 'note', label: 'Note', placeholder: 'Required for some reasons; one line is enough' },
+      ],
+      confirmLabel: 'Flag it',
+    });
+    if (!answer) return;
+    commit(S.flagPlannedStop(state, machine.id, answer.code, answer.note ?? ''));
+  }
+
+  /**
+   * The simulation stand-in for execution state.
+   *
+   * A machine picker rather than "the selected machine", because a reviewer
+   * usually wants to stop a machine they are NOT currently looking at — to see
+   * the flag appear on its card in the strip while they stay where they are.
+   */
+  async function handleRunState() {
+    const answer = await ask({
+      title: 'Simulate an execution-state change',
+      description: 'Stands in for what the collector would read from the controller — MTConnect Execution, a FOCAS '
+        + 'equivalent, or a stack-light relay. In the product this is never a button: the machine state simply arrives.',
+      fields: [
+        {
+          type: 'select',
+          name: 'machineId',
+          label: 'Machine',
+          options: state.machines.map((m) => ({ value: m.id, label: `${m.name} — currently ${m.state}` })),
+        },
+        {
+          type: 'select',
+          name: 'running',
+          label: 'Report it as',
+          options: [{ value: 'false', label: 'Stopped' }, { value: 'true', label: 'Running' }],
+        },
+      ],
+      confirmLabel: 'Report it',
+    });
+    if (!answer) return;
+    const result = S.setMachineRunning(state, answer.machineId, answer.running === 'true');
+    if (commit(result)) maybeRaiseDowntimeDialog();
+  }
+
   async function handleRecordScrap() {
     const machine = S.selectedMachine(state);
     if (!machine.active.done) { toast('No good pieces recorded yet on this job', 'bad'); return; }
@@ -759,8 +825,8 @@
       switch (act.dataset.act) {
         case 'complete-setup': commit(S.completeSetup(state, id), 'Setup confirmed — machine is cutting'); break;
         case 'start-next': commit(S.startNextJob(state, id), 'Next job loaded'); break;
-        case 'stop': commit(S.stopMachine(state, id)); break;
-        case 'resume': commit(S.resumeMachine(state, id), 'Machine resumed'); break;
+        case 'planned-stop': handlePlannedStop(); break;
+        case 'clear-planned-stop': commit(S.clearPlannedStop(state, id)); break;
         case 'request': openRequestDialog(id); break;
         case 'add-job': openAddJobDialog(); break;
         case 'set-estimate': handleSetEstimate(); break;
@@ -844,6 +910,7 @@
       toast(`Downtime prompt threshold: ${event.target.value}s`);
       render();
     });
+    $('runStateButton').addEventListener('click', handleRunState);
     $('faultButton').addEventListener('click', () => commit(S.injectFault(state, state.selected), 'Fault injected'));
     $('collectorToggle').addEventListener('click', () => {
       const machine = S.selectedMachine(state);

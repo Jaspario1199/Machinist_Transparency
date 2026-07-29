@@ -590,10 +590,27 @@
     const openBlockers = A.openBlockers(state, machine.id).length;
 
     const controls = [];
-    if (machine.state === 'SETUP') controls.push('<button class="btn primary" data-act="complete-setup" data-focus-key="complete-setup">Setup complete — start cutting</button>');
-    if (machine.state === 'READY') controls.push('<button class="btn primary" data-act="start-next" data-focus-key="start-next">Start next job</button>');
-    if (A.BLOCKED_STATES.includes(machine.state)) controls.push('<button class="btn good" data-act="resume" data-focus-key="resume">Resume machine</button>');
-    else controls.push('<button class="btn bad" data-act="stop" data-focus-key="stop">Stop machine</button>');
+    /*
+     * Nothing here commands the machine.
+     *
+     * "Stop machine" and "Resume machine" used to sit in this row. They were
+     * removed: the platform is read-only toward CNCs (docs/09, docs/10), and
+     * execution state is something the collector reads, not something a button
+     * sets. A Resume button could put PRODUCTION on the board while the spindle
+     * stood still, which is the opposite of what this application is for.
+     *
+     * What remains are records of things a machine cannot see: that a setup is
+     * finished, which job is being loaded next, and — the only genuinely new
+     * one — what the next stop is going to be, declared before it happens so
+     * the machinist is not chased for a reason they already gave.
+     */
+    if (machine.state === 'SETUP') controls.push('<button class="btn primary" data-act="complete-setup" data-focus-key="complete-setup">Setup complete</button>');
+    if (machine.state === 'READY') controls.push('<button class="btn primary" data-act="start-next" data-focus-key="start-next">Load next job</button>');
+    if (!A.BLOCKED_STATES.includes(machine.state)) {
+      controls.push(S.livePlannedStop(machine)
+        ? '<button class="btn" data-act="clear-planned-stop" data-focus-key="clear-planned-stop">Withdraw planned stop</button>'
+        : '<button class="btn" data-act="planned-stop" data-focus-key="planned-stop">Flag a planned stop</button>');
+    }
 
     /*
      * First-article hold. The machine stops itself after the first piece on a
@@ -609,7 +626,16 @@
           <button class="btn bad" data-act="first-off-reject" data-focus-key="first-off-reject">Reject — scrap and hold</button></p>`
       : '';
 
+    const planned = S.livePlannedStop(machine);
+    const plannedBanner = planned
+      ? `<p class="banner"><strong>Next stop is pre-classified.</strong> ${esc(planned.label)}
+          ${planned.note ? `— ${esc(planned.note)} ` : ''}· declared by ${esc(planned.declaredBy)} at
+          ${esc(time(planned.declaredAt))}. When the collector sees the machine stop it will be recorded as this and you
+          will not be asked. Expires ${esc(time(planned.expiresAt))}.</p>`
+      : '';
+
     return `${panelHead(state, machine, 'Machinist controls for this machine only', now, `<div class="head-actions">${controls.join('')}</div>`)}
+      ${plannedBanner}
       ${firstOff}
       ${needsReason ? `<p class="banner urgent"><strong>Reason needed.</strong> ${esc(machine.name)} has been stopped
         ${Math.round((now - machine.stateSince) / 60000)} min with no cause recorded. It stays flagged here, on the machine

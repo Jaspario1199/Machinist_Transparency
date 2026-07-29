@@ -1139,6 +1139,15 @@ textarea { min-height: 80px; resize: vertical; }
       </div>
       <div class="sim-actions">
         <button class="btn small" id="simToggle" aria-pressed="false">Pause telemetry</button>
+      <!--
+        Starting and stopping a machine belongs HERE and nowhere else.
+
+        With no real CNC connected, something has to stand in for the execution
+        state a collector would read. That stand-in is the simulation bar, which
+        is exactly what it says it is. Putting the same control in the machinist
+        panel would have implied the product commands the spindle, which it
+        never does — see the note above the machinist controls in views.js.
+      -->
         <label class="inline">Clock
           <select id="simSpeed">
             <option value="0.25">0.25 min/s</option>
@@ -1155,6 +1164,7 @@ textarea { min-height: 80px; resize: vertical; }
             <option value="600">600 s</option>
           </select>
         </label>
+        <button class="btn small" id="runStateButton">Start / stop a machine</button>
         <button class="btn small" id="faultButton">Inject fault</button>
         <button class="btn small" id="collectorToggle">Simulate collector dropout</button>
         <button class="btn small" id="exportButton">Export audit CSV</button>
@@ -2280,7 +2290,7 @@ window.DOWNTIME_REASONS = [
   const PERMISSIONS = {
     Machinist: [
       'decideRequest', 'reorderQueue', 'switchActiveJob', 'classifyDowntime',
-      'completeSetup', 'startNextJob', 'stopMachine', 'resumeMachine',
+      'completeSetup', 'startNextJob', 'flagPlannedStop', 'clearPlannedStop',
       'addOrderToQueue', 'addUnplannedJob', 'removeFromQueue', 'updateBlocker',
       'recordScrap', 'setMachinistEstimate', 'finaliseProcess', 'approveFirstOff',
       'submitRequest',
@@ -2723,6 +2733,39 @@ window.DOWNTIME_REASONS = [
    * config/downtime-reasons.csv and opens a blocker owned by the responsible
    * group defined in the same file.
    */
+  /**
+   * A reason owned by a responding group becomes a tracked blocker. Shared by
+   * the reactive path (someone answered the prompt) and the pre-classified one
+   * (someone declared the stop before it happened) so both routes route work to
+   * the same group in the same way.
+   */
+  function openBlockerFor(state, machine, reason, note, by) {
+    if (!reason.owner || reason.owner === '—' || reason.code === 'NO_WORK') return;
+    state.counters.blocker += 1;
+    state.blockers.push({
+      id: state.counters.blocker,
+      machineId: machine.id,
+      wo: machine.active.wo,
+      code: reason.code,
+      label: reason.label,
+      owner: reason.owner,
+      note,
+      status: 'OPEN',
+      openedAt: Date.now(),
+      openedBy: by,
+      ackAt: null,
+      closedAt: null,
+    });
+    record(state, {
+      actor: 'System',
+      role: 'System',
+      machineId: machine.id,
+      event: 'BLOCKER_OPENED',
+      wo: machine.active.wo,
+      summary: `Blocker assigned to ${reason.owner}`,
+    });
+  }
+
   function classifyDowntime(state, machineId, code, note = '') {
     const permitted = may(state, 'classifyDowntime');
     if (!permitted.ok) return permitted;
@@ -2754,32 +2797,7 @@ window.DOWNTIME_REASONS = [
       summary: `Classified stoppage as ${reason.label}${note.trim() ? ` — ${note.trim()}` : ''}`,
     });
 
-    // Reasons owned by a responding group become tracked blockers.
-    if (reason.owner && reason.owner !== '—' && code !== 'NO_WORK') {
-      state.counters.blocker += 1;
-      state.blockers.push({
-        id: state.counters.blocker,
-        machineId,
-        wo: machine.active.wo,
-        code: reason.code,
-        label: reason.label,
-        owner: reason.owner,
-        note: note.trim(),
-        status: 'OPEN',
-        openedAt: Date.now(),
-        openedBy: actor.name,
-        ackAt: null,
-        closedAt: null,
-      });
-      record(state, {
-        actor: 'System',
-        role: 'System',
-        machineId,
-        event: 'BLOCKER_OPENED',
-        wo: machine.active.wo,
-        summary: `Blocker assigned to ${reason.owner}`,
-      });
-    }
+    openBlockerFor(state, machine, reason, note.trim(), actor.name);
     return { ok: true };
   }
 
@@ -2905,28 +2923,156 @@ window.DOWNTIME_REASONS = [
     return { ok: true };
   }
 
-  function stopMachine(state, machineId) {
-    const permitted = may(state, 'stopMachine');
-    if (!permitted.ok) return permitted;
+  /*
+   * ==========================================================================
+   * MACHINE STATE IS OBSERVED, NEVER COMMANDED
+   * ==========================================================================
+   *
+   * There used to be "Stop machine" and "Resume machine" buttons here, writing
+   * `stopped by operator` and `resumed by operator` into machine state. That
+   * was wrong in two separate ways.
+   *
+   * It contradicted the product. `docs/09` and `docs/10` both carry "the
+   * platform remains read-only toward CNCs" as an acceptance criterion, and the
+   * operations panel says "nothing is sent to the machine" a few lines under
+   * where the red Stop button used to sit. A visibility sidecar that appears to
+   * command a spindle is the fastest possible route to R-05 — being read as a
+   * competing MES — and to a controls engineer refusing the connection.
+   *
+   * It was also redundant, and worse than redundant: it could lie. Execution
+   * state is exactly what the collector already reads — MTConnect `Execution`
+   * (ACTIVE / INTERRUPTED / STOPPED / READY) plus `Availability` and
+   * `ControllerMode`, FANUC FOCAS equivalents, or a stack-light relay at the
+   * bottom of the `docs/06` hierarchy. It arrives in seconds without anyone
+   * pressing anything. A Resume button let a machinist put PRODUCTION on the
+   * board while the spindle sat still.
+   *
+   * So state transitions now enter through one door — the collector — and
+   * `setMachineRunning` is that door. It is deliberately NOT in PERMISSIONS and
+   * takes no actor: it is not a person doing something, and the audit row is
+   * attributed to the collector. In the demo the simulation bar drives it,
+   * which is honest, because the simulation bar IS the stand-in collector.
+   */
+  function setMachineRunning(state, machineId, running) {
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
-    if (A.BLOCKED_STATES.includes(machine.state)) return { ok: false, reason: 'Already stopped' };
-    const actor = currentActor(state);
-    setState(state, machine, 'STOPPED', { actor: actor.name, role: actor.role, detail: 'stopped by operator' });
-    machine.history.interventions += 1;
-    return { ok: true };
+    const stopped = A.BLOCKED_STATES.includes(machine.state);
+    if (running === !stopped) {
+      return { ok: false, reason: `The collector already reports ${machine.name} as ${machine.state}` };
+    }
+
+    if (!running) {
+      setState(state, machine, 'STOPPED', {
+        actor: 'Collector', role: 'System', detail: 'execution stopped — reported by the collector',
+      });
+      applyPlannedStop(state, machine);
+      return { ok: true, message: `Collector reports ${machine.name} stopped` };
+    }
+
+    const next = machine.setupRemainingMin > 0 ? 'SETUP' : 'PRODUCTION';
+    setState(state, machine, next, {
+      actor: 'Collector', role: 'System', detail: 'execution resumed — reported by the collector',
+    });
+    machine.plannedStop = null;
+    return { ok: true, message: `Collector reports ${machine.name} running` };
   }
 
-  function resumeMachine(state, machineId) {
-    const permitted = may(state, 'resumeMachine');
+  /**
+   * The one thing the sensors genuinely cannot know: why, and in advance.
+   *
+   * The collector sees a stop the instant it happens but has no idea whether it
+   * is a tool change, a scheduled break, preventive maintenance or a crash. The
+   * reactive path — stop, wait past the threshold, prompt — is right for the
+   * unexpected ones and a nuisance for the planned ones, and nuisance prompts
+   * are how the whole system gets ignored (R-01/R-04).
+   *
+   * So a machinist can say beforehand what the next stop will be. This changes
+   * no machine state and sends nothing anywhere; it arms a reason that the
+   * collector's next observed stop consumes. Declaring it is audited, and so is
+   * consuming it, because "pre-classified" and "answered at the time" are
+   * different claims and leadership should be able to tell them apart.
+   */
+  function flagPlannedStop(state, machineId, code, note = '', windowMin = 30) {
+    const permitted = may(state, 'flagPlannedStop');
     if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
-    if (!A.BLOCKED_STATES.includes(machine.state)) return { ok: false, reason: 'Machine is not stopped' };
+    const reason = reasonByCode(code);
+    if (!reason) return { ok: false, reason: 'Unknown reason code' };
+    if (reason.noteRequired && !note.trim()) {
+      return { ok: false, reason: `${reason.label} needs a one-line note` };
+    }
+
     const actor = currentActor(state);
-    const next = machine.setupRemainingMin > 0 ? 'SETUP' : 'PRODUCTION';
-    setState(state, machine, next, { actor: actor.name, role: actor.role, detail: 'resumed by operator' });
-    return { ok: true };
+    machine.plannedStop = {
+      code, label: reason.label, owner: reason.owner, note: note.trim(),
+      declaredBy: actor.name, declaredAt: Date.now(), expiresAt: Date.now() + windowMin * MIN,
+    };
+    record(state, {
+      machineId,
+      event: 'PLANNED_STOP_DECLARED',
+      wo: machine.active.wo,
+      summary: `${actor.name} flagged an upcoming stop: ${reason.label}`
+        + `${note.trim() ? ` — ${note.trim()}` : ''}. It will be classified automatically and not chased for a reason, `
+        + `for the next ${windowMin} min.`,
+    });
+    return { ok: true, message: `Next stop is pre-classified as ${reason.label} — you will not be prompted` };
+  }
+
+  function clearPlannedStop(state, machineId) {
+    const permitted = may(state, 'clearPlannedStop');
+    if (!permitted.ok) return permitted;
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    if (!machine.plannedStop) return { ok: false, reason: 'No planned stop is flagged' };
+    const { label } = machine.plannedStop;
+    machine.plannedStop = null;
+    record(state, {
+      machineId,
+      event: 'PLANNED_STOP_CLEARED',
+      wo: machine.active.wo,
+      summary: `Planned stop (${label}) withdrawn — the next stoppage will be asked about as usual`,
+    });
+    return { ok: true, message: 'Withdrawn' };
+  }
+
+  /** Is a declared planned stop still live? */
+  function livePlannedStop(machine, at = now()) {
+    const planned = machine.plannedStop;
+    if (!planned) return null;
+    return planned.expiresAt > at ? planned : null;
+  }
+
+  /**
+   * Consumes a live declaration when the collector reports the stop. An expired
+   * one is discarded and the machine is asked as normal — a tool change flagged
+   * two hours ago is not an explanation for a stop happening now.
+   */
+  function applyPlannedStop(state, machine) {
+    const planned = livePlannedStop(machine);
+    machine.plannedStop = null;
+    if (!planned) return;
+
+    machine.downtime = {
+      code: planned.code,
+      label: planned.label,
+      owner: planned.owner,
+      note: planned.note,
+      startedAt: machine.stateSince,
+      classifiedAt: Date.now(),
+      classifiedBy: planned.declaredBy,
+      preClassified: true,
+    };
+    record(state, {
+      actor: 'Collector',
+      role: 'System',
+      machineId: machine.id,
+      event: 'DOWNTIME_PRECLASSIFIED',
+      wo: machine.active.wo,
+      summary: `Stop classified on arrival as ${planned.label} — declared in advance by ${planned.declaredBy}`
+        + `${planned.note ? ` — ${planned.note}` : ''}. Nobody was prompted.`,
+    });
+    openBlockerFor(state, machine, reasonByCode(planned.code), planned.note, planned.declaredBy);
   }
 
 
@@ -3669,8 +3815,10 @@ window.DOWNTIME_REASONS = [
     snoozeDowntimePrompt,
     needsDowntimeReason,
     downtimePromptDue,
-    stopMachine,
-    resumeMachine,
+    setMachineRunning,
+    flagPlannedStop,
+    clearPlannedStop,
+    livePlannedStop,
     setState,
     tick,
     setCollectorOnline,
@@ -4276,10 +4424,27 @@ window.DOWNTIME_REASONS = [
     const openBlockers = A.openBlockers(state, machine.id).length;
 
     const controls = [];
-    if (machine.state === 'SETUP') controls.push('<button class="btn primary" data-act="complete-setup" data-focus-key="complete-setup">Setup complete — start cutting</button>');
-    if (machine.state === 'READY') controls.push('<button class="btn primary" data-act="start-next" data-focus-key="start-next">Start next job</button>');
-    if (A.BLOCKED_STATES.includes(machine.state)) controls.push('<button class="btn good" data-act="resume" data-focus-key="resume">Resume machine</button>');
-    else controls.push('<button class="btn bad" data-act="stop" data-focus-key="stop">Stop machine</button>');
+    /*
+     * Nothing here commands the machine.
+     *
+     * "Stop machine" and "Resume machine" used to sit in this row. They were
+     * removed: the platform is read-only toward CNCs (docs/09, docs/10), and
+     * execution state is something the collector reads, not something a button
+     * sets. A Resume button could put PRODUCTION on the board while the spindle
+     * stood still, which is the opposite of what this application is for.
+     *
+     * What remains are records of things a machine cannot see: that a setup is
+     * finished, which job is being loaded next, and — the only genuinely new
+     * one — what the next stop is going to be, declared before it happens so
+     * the machinist is not chased for a reason they already gave.
+     */
+    if (machine.state === 'SETUP') controls.push('<button class="btn primary" data-act="complete-setup" data-focus-key="complete-setup">Setup complete</button>');
+    if (machine.state === 'READY') controls.push('<button class="btn primary" data-act="start-next" data-focus-key="start-next">Load next job</button>');
+    if (!A.BLOCKED_STATES.includes(machine.state)) {
+      controls.push(S.livePlannedStop(machine)
+        ? '<button class="btn" data-act="clear-planned-stop" data-focus-key="clear-planned-stop">Withdraw planned stop</button>'
+        : '<button class="btn" data-act="planned-stop" data-focus-key="planned-stop">Flag a planned stop</button>');
+    }
 
     /*
      * First-article hold. The machine stops itself after the first piece on a
@@ -4295,7 +4460,16 @@ window.DOWNTIME_REASONS = [
           <button class="btn bad" data-act="first-off-reject" data-focus-key="first-off-reject">Reject — scrap and hold</button></p>`
       : '';
 
+    const planned = S.livePlannedStop(machine);
+    const plannedBanner = planned
+      ? `<p class="banner"><strong>Next stop is pre-classified.</strong> ${esc(planned.label)}
+          ${planned.note ? `— ${esc(planned.note)} ` : ''}· declared by ${esc(planned.declaredBy)} at
+          ${esc(time(planned.declaredAt))}. When the collector sees the machine stop it will be recorded as this and you
+          will not be asked. Expires ${esc(time(planned.expiresAt))}.</p>`
+      : '';
+
     return `${panelHead(state, machine, 'Machinist controls for this machine only', now, `<div class="head-actions">${controls.join('')}</div>`)}
+      ${plannedBanner}
       ${firstOff}
       ${needsReason ? `<p class="banner urgent"><strong>Reason needed.</strong> ${esc(machine.name)} has been stopped
         ${Math.round((now - machine.stateSince) / 60000)} min with no cause recorded. It stays flagged here, on the machine
@@ -5029,6 +5203,72 @@ window.DOWNTIME_REASONS = [
     commit(result, `Recorded as ${reason.label} — ${reason.owner} notified`);
   }
 
+  /**
+   * Declare the reason for a stop that has not happened yet.
+   *
+   * The reasons offered are the same agreed list from
+   * `config/downtime-reasons.csv` that the reactive prompt uses, so a
+   * pre-classified stop and an answered one are the same category of record and
+   * the Pareto does not gain a private vocabulary.
+   */
+  async function handlePlannedStop() {
+    const machine = S.selectedMachine(state);
+    const answer = await ask({
+      title: `Flag a planned stop on ${machine.name}`,
+      description: 'This changes nothing on the machine and sends nothing anywhere. It arms a reason, so when the '
+        + 'collector next sees this machine stop it is recorded as that and you are not asked for a reason you have '
+        + 'already given. It lapses after 30 minutes.',
+      fields: [
+        {
+          type: 'select',
+          name: 'code',
+          label: 'What is the stop for?',
+          options: window.DOWNTIME_REASONS.map((r) => ({
+            value: r.code,
+            label: `${r.label} — ${r.owner}${r.noteRequired ? ' (note required)' : ''}`,
+          })),
+        },
+        { type: 'textarea', name: 'note', label: 'Note', placeholder: 'Required for some reasons; one line is enough' },
+      ],
+      confirmLabel: 'Flag it',
+    });
+    if (!answer) return;
+    commit(S.flagPlannedStop(state, machine.id, answer.code, answer.note ?? ''));
+  }
+
+  /**
+   * The simulation stand-in for execution state.
+   *
+   * A machine picker rather than "the selected machine", because a reviewer
+   * usually wants to stop a machine they are NOT currently looking at — to see
+   * the flag appear on its card in the strip while they stay where they are.
+   */
+  async function handleRunState() {
+    const answer = await ask({
+      title: 'Simulate an execution-state change',
+      description: 'Stands in for what the collector would read from the controller — MTConnect Execution, a FOCAS '
+        + 'equivalent, or a stack-light relay. In the product this is never a button: the machine state simply arrives.',
+      fields: [
+        {
+          type: 'select',
+          name: 'machineId',
+          label: 'Machine',
+          options: state.machines.map((m) => ({ value: m.id, label: `${m.name} — currently ${m.state}` })),
+        },
+        {
+          type: 'select',
+          name: 'running',
+          label: 'Report it as',
+          options: [{ value: 'false', label: 'Stopped' }, { value: 'true', label: 'Running' }],
+        },
+      ],
+      confirmLabel: 'Report it',
+    });
+    if (!answer) return;
+    const result = S.setMachineRunning(state, answer.machineId, answer.running === 'true');
+    if (commit(result)) maybeRaiseDowntimeDialog();
+  }
+
   async function handleRecordScrap() {
     const machine = S.selectedMachine(state);
     if (!machine.active.done) { toast('No good pieces recorded yet on this job', 'bad'); return; }
@@ -5211,8 +5451,8 @@ window.DOWNTIME_REASONS = [
       switch (act.dataset.act) {
         case 'complete-setup': commit(S.completeSetup(state, id), 'Setup confirmed — machine is cutting'); break;
         case 'start-next': commit(S.startNextJob(state, id), 'Next job loaded'); break;
-        case 'stop': commit(S.stopMachine(state, id)); break;
-        case 'resume': commit(S.resumeMachine(state, id), 'Machine resumed'); break;
+        case 'planned-stop': handlePlannedStop(); break;
+        case 'clear-planned-stop': commit(S.clearPlannedStop(state, id)); break;
         case 'request': openRequestDialog(id); break;
         case 'add-job': openAddJobDialog(); break;
         case 'set-estimate': handleSetEstimate(); break;
@@ -5296,6 +5536,7 @@ window.DOWNTIME_REASONS = [
       toast(`Downtime prompt threshold: ${event.target.value}s`);
       render();
     });
+    $('runStateButton').addEventListener('click', handleRunState);
     $('faultButton').addEventListener('click', () => commit(S.injectFault(state, state.selected), 'Fault injected'));
     $('collectorToggle').addEventListener('click', () => {
       const machine = S.selectedMachine(state);
