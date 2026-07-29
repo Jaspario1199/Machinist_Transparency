@@ -188,8 +188,24 @@ To apply an identity:
 1. Replace the values in the `BRAND` block of `theme.css` (`--brand`,
    `--accent`, `--accent-solid`, and the `--on-brand-*` text colours that sit on
    the header band).
-2. Optionally set `--brand-logo` to a data-URI of the mark and
-   `--brand-logo-display: block`.
+2. Add the company mark with one command — do not hand-edit the LOGO block:
+
+   ```bash
+   node scripts/embed-logo.mjs path/to/rochester-sensors.svg
+   node scripts/embed-logo.mjs --clear     # back to the text wordmark
+   ```
+
+   It inlines the file as a data URI, reads the artwork's own aspect ratio so
+   the header reserves the right box, and stands the text wordmark down so the
+   company name is not stated twice. **Supply SVG if you have it** — the
+   standalone build carries every byte to a shop terminal with no network, and
+   a mark has to stay sharp on a wall panel. A PNG works; a 200 KB one costs
+   270 KB inlined.
+
+   The mark sits on a **white plate**, because most corporate lockups are dark
+   ink drawn for a white page and this header band is `#004A98`. If the brand
+   team supplies a light-on-dark variant instead, set
+   `--brand-logo-plate: transparent`.
 3. For a licensed corporate typeface, self-host or inline it as a data URI and
    put it at the front of `--font-body`. **Do not link a CDN** — the page has to
    render from a file on a USB stick with no network, and a test enforces that.

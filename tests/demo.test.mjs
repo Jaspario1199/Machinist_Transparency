@@ -1772,3 +1772,60 @@ test('a stale declaration does not explain a stop that happens much later', asyn
   assert.equal(machine.downtime, null, 'an expired declaration must not auto-classify');
   assert.equal(machine.plannedStop, null);
 });
+
+// ------------------------------------------------------------------ logo ---
+
+test('a supplied mark gets the light plate it was drawn for', async () => {
+  const page = await open();
+  const headerBg = await page.evaluate(() =>
+    getComputedStyle(document.querySelector('header')).backgroundColor);
+
+  await page.evaluate(() => {
+    const r = document.documentElement;
+    r.style.setProperty('--brand-logo', 'url("data:image/svg+xml;base64,PHN2Zy8+")');
+    r.style.setProperty('--brand-logo-display', 'block');
+    r.style.setProperty('--brand-eyebrow-display', 'none');
+  });
+
+  const mark = await page.evaluate(() => {
+    const el = document.querySelector('.brand-mark');
+    const s = getComputedStyle(el);
+    return { display: s.display, bg: s.backgroundColor, w: el.getBoundingClientRect().width };
+  });
+  assert.equal(mark.display, 'block');
+  assert.notEqual(mark.bg, headerBg,
+    'a dark corporate lockup on the dark header band is invisible — it needs the white plate');
+  assert.ok(mark.w > 0, 'the box must be sized from the artwork, not collapsed to nothing');
+
+  // The text wordmark stands down so the company name is not stated twice.
+  assert.equal(await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.brand-eyebrow')).display), 'none');
+});
+
+test('the logo embedder round-trips a mark into the theme and back out', async () => {
+  const { readFileSync, writeFileSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const themePath = join(root, 'demo', 'theme.css');
+  const before = readFileSync(themePath, 'utf8');
+
+  const dir = mkdtempSync(join(tmpdir(), 'mt-logo-'));
+  const svg = join(dir, 'mark.svg');
+  writeFileSync(svg, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100"></svg>');
+
+  try {
+    execSync(`node scripts/embed-logo.mjs ${svg} --height 44`, { cwd: root, stdio: 'pipe' });
+    const embedded = readFileSync(themePath, 'utf8');
+    assert.match(embedded, /--brand-logo: url\("data:image\/svg\+xml;base64,/);
+    assert.match(embedded, /--brand-logo-display: block;/);
+    assert.match(embedded, /--brand-logo-height: 44px;/);
+    assert.match(embedded, /--brand-logo-aspect: 3;/, 'the aspect ratio must come from the file, not a guess');
+    assert.match(embedded, /--brand-eyebrow-display: none;/);
+    // Inlined, never linked — the standalone build has to run with no network.
+    assert.doesNotMatch(embedded, /url\(\s*['"]?https?:/);
+
+    execSync('node scripts/embed-logo.mjs --clear', { cwd: root, stdio: 'pipe' });
+    assert.match(readFileSync(themePath, 'utf8'), /--brand-logo: none;/);
+  } finally {
+    writeFileSync(themePath, before);
+  }
+});
