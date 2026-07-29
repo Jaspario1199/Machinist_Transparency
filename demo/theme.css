@@ -80,7 +80,7 @@
   --bg: #ffffff;
   --card: #ffffff;
   --soft: #f8f8f8;               /* inset panels, stat bands, job cards       */
-  --simbar-bg: #eaeaea;          /* chrome, deliberately not content-white    */
+  --simbar-bg: #ffffff;          /* white like the page; separated by a rule  */
   --border: #e0e0e0;             /* decorative separators                     */
   --border-strong: #8a8a8a;      /* 3.45:1 — interactive outlines need 3:1    */
   --text: #333333;
