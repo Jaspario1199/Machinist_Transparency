@@ -1,0 +1,188 @@
+/*
+ * ============================================================================
+ * BRAND THEME — Rochester Sensors
+ * ============================================================================
+ *
+ * Applied from the Rochester Sensors UI handoff. This is the only file to edit
+ * to re-skin the application; app.css contains no colour or typeface literals
+ * and a test fails the build if one appears.
+ *
+ * Two deliberate deviations from the marketing site, both for the shop floor:
+ *
+ *   1. Brand green #149E05 is used decoratively only. It measures 3.55:1
+ *      against white, so it cannot carry white button labels or serve as body
+ *      text without failing WCAG AA. A darkened #0F7A04 (5.52:1) does the work
+ *      wherever text is involved. The brand green is kept below as
+ *      --brand-green for marks and rules.
+ *   2. Buttons keep a 44px minimum height rather than the site's ~6px/12px
+ *      padding. Radius, colour, weight and casing follow the spec exactly; only
+ *      the target size is larger, because these are pressed with gloves on a
+ *      wall terminal rather than clicked with a mouse.
+ *
+ * Typeface: Open Sans is specified. It is NOT linked from a CDN — the
+ * standalone build has to render from a USB stick with no network, and a test
+ * enforces that. Machines with Open Sans installed get it; everything else
+ * falls back to Segoe UI, which is on every Windows install and is a close
+ * humanist match. To guarantee it off-network, self-host the woff2 and inline
+ * it as a data URI in an @font-face here.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- BRAND --
+   * Rochester Sensors palette.
+   */
+  --brand: #004a98;              /* top utility bar, footer bar, app header   */
+  --accent: #00529b;             /* nav links, headings, active states        */
+  --accent-solid: #004a98;       /* filled buttons — 8.63:1 with white        */
+  --brand-green: #149e05;        /* logo swoosh, ribbons — NEVER behind text  */
+
+  /* On-brand text: everything sitting on the blue band. */
+  --on-brand: #ffffff;
+  --on-brand-soft: #a4d3ff;      /* tagline — 5.48:1 on --brand              */
+  --on-brand-muted: #a4d3ff;     /* "signed in as"                           */
+  --on-brand-border: #ffffff8c;  /* outline buttons on the header band       */
+
+  /* ------------------------------------------------------------ TYPEFACE -- */
+  --font-body: "Open Sans", "Segoe UI", Tahoma, system-ui, sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* --------------------------------------------------------------- SHAPE -- */
+  --radius: 4px;                 /* site standard                             */
+  --radius-sm: 4px;
+  --radius-lg: 4px;
+  --container: 1140px;           /* site content container                    */
+  --tap: 44px;                   /* shop-floor minimum — see note above       */
+  --shadow: 0 6px 20px #00000026;
+
+  /* ---------------------------------------------------------- STATE HUES --
+   * Semantic, not brand. Green/amber/red carry meaning on the floor and stay
+   * recognisable through a rebrand. Greens are the darkened brand green so
+   * they pass AA both as text on a tint and as a fill under white labels.
+   */
+  --green: #0f7a04;
+  --amber: #7a5200;
+  --red: #b3202c;
+  --green-solid: #0f7a04;
+  --red-solid: #b3202c;
+
+  /* ------------------------------------------------------------ SURFACES --
+   * White page, matching the site. Grey is used only for inset panels — the
+   * same way the site uses it for the "By Technology" sidebar — so separation
+   * comes from borders rather than from a background change. That is why
+   * --border-strong exists: with a white card on a white page, the card
+   * outline is the only thing identifying it, and an outline that identifies
+   * an interactive component needs 3:1 (WCAG 1.4.11).
+   */
+  --bg: #ffffff;
+  --card: #ffffff;
+  --soft: #f8f8f8;               /* inset panels, stat bands, job cards       */
+  --simbar-bg: #ffffff;          /* white like the page; separated by a rule  */
+  --border: #e0e0e0;             /* decorative separators                     */
+  --border-strong: #8a8a8a;      /* 3.45:1 — interactive outlines need 3:1    */
+  --text: #333333;
+  --muted: #666666;              /* 5.74:1 on white, 4.77:1 on --soft         */
+  --focus: #0055a6;
+  --backdrop: #00294dcc;
+  --toast-bg: #333333;
+  --toast-fg: #ffffff;
+  --skip-bg: #ffffff;
+  --skip-fg: #004a98;
+
+  /* --------------------------------------------------------------- LOGO --
+   * Do not edit the block below by hand. Run:
+   *
+   *   node scripts/embed-logo.mjs path/to/rochester-sensors.svg
+   *
+   * which inlines the file as a data URI, reads its intrinsic aspect ratio so
+   * the header reserves the right box, and stands the text wordmark down. SVG
+   * is strongly preferred: the standalone build carries every byte to a shop
+   * terminal with no network, and it has to stay sharp on a wall panel.
+   *
+   * The mark sits on a white plate — see --brand-logo-plate below and the note
+   * on .brand-mark in app.css. The Rochester Sensors lockup is navy, blue and
+   * green on transparent, built for a white page; dropped straight onto the
+   * #004A98 header band it would be very nearly invisible.
+   */
+  --brand-logo-plate: #ffffff;   /* set to `transparent` for a light mark */
+  --brand-logo-plate-pad: 8px 12px;
+
+  /* --- LOGO: generated by scripts/embed-logo.mjs — do not hand-edit --- */
+  --brand-logo: none;
+  --brand-logo-display: none;
+  --brand-logo-aspect: 3.5;
+  --brand-eyebrow-display: block;
+  /* --- end LOGO --- */
+
+  font-family: var(--font-body);
+}
+
+/*
+ * Dark theme. The brand has no dark specification, so this is derived from the
+ * same blues — deepened for surfaces, lightened for anything that becomes text.
+ * Applied by OS preference unless the viewer has pinned light, and by an
+ * explicit data-theme on the root, which wins over the OS in both directions.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand: #00325f;
+    --accent: #7ab8ff;
+    --accent-solid: #0b5fbe;
+    --brand-green: #35c41f;
+    --on-brand-soft: #a4d3ff;
+    --on-brand-muted: #a4d3ff;
+
+    --bg: #101418;
+    --card: #1b2028;
+    --soft: #232830;
+    --simbar-bg: #1a1f26;
+    --border: #333a44;
+    --border-strong: #6d7683;
+    --text: #e8eaed;
+    --muted: #a9b0ba;
+    --focus: #7ab8ff;
+    --backdrop: #000e1ccc;
+    --toast-bg: #e8eaed;
+    --toast-fg: #101418;
+    --skip-bg: #e8eaed;
+    --skip-fg: #00325f;
+
+    /* Tuned for TEXT on dark panels — too light to carry white labels, */
+    --green: #4cc46a;
+    --amber: #e0a83a;
+    --red: #ff7b7b;
+    /* — so the fills that do carry white labels stay dark. */
+    --green-solid: #17701f;
+    --red-solid: #b3202c;
+  }
+}
+
+:root[data-theme="dark"] {
+  --brand: #00325f;
+  --accent: #7ab8ff;
+  --accent-solid: #0b5fbe;
+  --brand-green: #35c41f;
+  --on-brand-soft: #a4d3ff;
+  --on-brand-muted: #a4d3ff;
+
+  --bg: #101418;
+  --card: #1b2028;
+  --soft: #232830;
+  --simbar-bg: #1a1f26;
+  --border: #333a44;
+  --border-strong: #6d7683;
+  --text: #e8eaed;
+  --muted: #a9b0ba;
+  --focus: #7ab8ff;
+  --backdrop: #000e1ccc;
+  --toast-bg: #e8eaed;
+  --toast-fg: #101418;
+  --skip-bg: #e8eaed;
+  --skip-fg: #00325f;
+
+  --green: #4cc46a;
+  --amber: #e0a83a;
+  --red: #ff7b7b;
+  --green-solid: #17701f;
+  --red-solid: #b3202c;
+}

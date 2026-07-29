@@ -5,6 +5,9 @@
 - Machine availability and connection health
 - Execution state and cycle start/stop
 - Program number/name where exposed
+- Currently executing block or sequence number where exposed (MTConnect block,
+  FANUC FOCAS running sequence number, Okuma OSP equivalent) — this is what
+  makes in-cycle operation progress possible
 - Alarm state/code where exposed
 - Automatic/manual mode
 - Part count where reliable
@@ -39,7 +42,14 @@ Prefer native MTConnect, OPC UA, or OEM interfaces. Use isolated digital I/O onl
 
 ### Engineers
 
-- Maintain released revision, routing, program, tooling, fixture, and inspection requirements in existing controlled systems
+- Maintain released revision, routing, fixture, and inspection requirements in existing controlled systems
+
+**Note on programs and operations.** At this site the CNC operation plan — the
+sequence of operations, their tools and their estimated times — is authored by
+machinists in CAMWorks and posted to G-code, not held in D365 or Bluestar. It
+therefore has no system of record today. See `docs/13` D-25: filling that gap
+is a deliberate decision, not an assumption, because it makes the platform more
+than a pure read-only sidecar.
 - Review cycle, setup, tooling, and intervention analytics
 
 ### Materials

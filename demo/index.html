@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Machinist Transparency — CNC visibility beta</title>
+<meta name="description" content="Simulated CNC visibility and controlled queue-change beta. No machine, database or business-system connection.">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<a class="skip-link" href="#panel">Skip to the machine workspace</a>
+
+<header>
+  <div class="header">
+    <div class="brand">
+      <span class="brand-mark" role="img" aria-label="Rochester Sensors"></span>
+      <span class="brand-eyebrow">Rochester Sensors</span>
+      <h1>Machinist Transparency</h1>
+      <p class="tagline">CNC visibility and controlled queue changes</p>
+    </div>
+    <div class="header-right">
+      <div class="identity">
+        <label class="muted" for="actorSelect">Signed in at this terminal</label>
+        <div class="identity-row">
+          <select id="actorSelect" aria-describedby="actorName"></select>
+          <button class="btn small ghost" id="signOutButton" type="button">Sign out</button>
+        </div>
+        <span class="muted small" id="actorName">—</span>
+      </div>
+      <nav>
+        <div class="tabs" role="tablist" aria-label="Choose your role">
+          <button class="tab active" role="tab" id="tab-machinist" data-role="machinist" aria-selected="true" aria-controls="panel" tabindex="0">Machinist</button>
+          <button class="tab" role="tab" id="tab-engineer" data-role="engineer" aria-selected="false" aria-controls="panel" tabindex="-1">Engineer / PM</button>
+          <button class="tab" role="tab" id="tab-leadership" data-role="leadership" aria-selected="false" aria-controls="panel" tabindex="-1">Leadership</button>
+        </div>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<noscript>
+  <p class="banner urgent nojs">This demo needs JavaScript. It runs entirely in your browser — nothing is sent anywhere.</p>
+</noscript>
+
+<main>
+  <section class="top">
+    <div>
+      <h2 id="title">Machinist workspace</h2>
+      <p id="help">Pick your CNC. Everything below applies to that machine only.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="chooseTitle">
+    <div class="choose">
+      <h3 id="chooseTitle">Choose your CNC</h3>
+      <span id="chooseHelp" class="muted">The selected machine opens below.</span>
+    </div>
+    <div class="machines" id="machines"></div>
+  </section>
+
+  <!--
+    Shop-wide counts sit BELOW the machines, and behind a disclosure.
+
+    The machines and their work are the product; eleven aggregate tiles above
+    them turned the first screen into a dashboard and pushed the actual shop
+    off the fold. The summary line on the closed disclosure still names
+    anything outstanding, so nothing urgent is hidden by collapsing it — see
+    the note in views.js.
+  -->
+  <section id="metrics" aria-label="Shop-wide status" hidden></section>
+
+  <section class="panel" id="panel" role="tabpanel" aria-labelledby="tab-machinist" tabindex="-1"></section>
+
+  <section class="panel" id="shopAudit" hidden>
+    <div class="panel-head">
+      <div>
+        <h3>Shop-wide audit trail</h3>
+        <div class="muted">Every queue decision, downtime classification and state change — attributable and timestamped.</div>
+      </div>
+    </div>
+    <div class="content" id="shopAuditBody"></div>
+  </section>
+
+  <!--
+    Simulation controls live at the foot of the page, below the work.
+
+    A clock-speed multiplier and an "inject fault" button are the interface of a
+    management simulator, and sitting them second on the page taught the eye
+    "this is a toy" before the shop had loaded. They are still needed — a
+    reviewer cannot otherwise force a fault or compress a shift — so they stay,
+    labelled and reachable, in the place a real application keeps its
+    diagnostics: at the bottom, next to the disclaimer that explains them.
+  -->
+  <div class="simbar">
+    <div class="simbar-inner">
+      <div class="sim-heading">
+        <span class="sim-tag">Simulation controls</span>
+        <span class="muted small">Stand-in for the edge collector. None of these are product features.</span>
+      </div>
+      <div class="sim-actions">
+        <button class="btn small" id="simToggle" aria-pressed="false">Pause telemetry</button>
+      <!--
+        Starting and stopping a machine belongs HERE and nowhere else.
+
+        With no real CNC connected, something has to stand in for the execution
+        state a collector would read. That stand-in is the simulation bar, which
+        is exactly what it says it is. Putting the same control in the machinist
+        panel would have implied the product commands the spindle, which it
+        never does — see the note above the machinist controls in views.js.
+      -->
+        <label class="inline">Clock
+          <select id="simSpeed">
+            <option value="0.25">0.25 min/s</option>
+            <option value="1" selected>1 min/s</option>
+            <option value="4">4 min/s</option>
+            <option value="15">15 min/s</option>
+          </select>
+        </label>
+        <label class="inline">Downtime prompt after
+          <select id="promptThreshold">
+            <option value="20">20 s</option>
+            <option value="60">60 s</option>
+            <option value="180" selected>180 s</option>
+            <option value="600">600 s</option>
+          </select>
+        </label>
+        <button class="btn small" id="runStateButton">Start / stop a machine</button>
+        <button class="btn small" id="faultButton">Inject fault</button>
+        <button class="btn small" id="collectorToggle">Simulate collector dropout</button>
+        <button class="btn small" id="exportButton">Export audit CSV</button>
+        <button class="btn small" id="resetButton">Reset demo</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p><strong>Simulated beta.</strong> No CNC, Dynamics 365, Bluestar, FS1, database or network connection. All data on
+      this page is fabricated and lives only in this browser tab.</p>
+    <p class="muted small">ETAs shown here are advisory ranges. Committed dates, quantities and priorities remain in
+      Dynamics 365.</p>
+  </footer>
+</main>
+
+<!-- Queue-change request -->
+<dialog id="requestDialog" aria-labelledby="requestDialogTitle">
+  <div class="dialog-head">
+    <div>
+      <h3 id="requestDialogTitle">Request a queue change</h3>
+      <p class="muted">The machinist must approve it before the executable queue changes.</p>
+    </div>
+    <button class="btn small" id="requestClose" type="button">Close</button>
+  </div>
+  <div class="dialog-body">
+    <fieldset>
+      <legend>Machine</legend>
+      <div class="modal-machines" id="requestMachines"></div>
+    </fieldset>
+
+    <p class="notice warn" id="requestNoQueue" hidden></p>
+
+    <form id="requestForm">
+      <fieldset>
+        <legend>Requested move</legend>
+        <div class="form">
+          <label class="full"><span>Job to move</span><select id="requestJob" required></select></label>
+          <label><span>Move to position</span><select id="requestPosition" required></select></label>
+          <label><span>Urgency</span>
+            <select id="requestUrgency">
+              <option value="HIGH">High</option>
+              <option value="NORMAL" selected>Normal</option>
+              <option value="LOW">Low</option>
+            </select>
+          </label>
+          <label class="full"><span>Desired timing</span>
+            <select id="requestTiming">
+              <option value="NOW">Now — interrupt the current cycle</option>
+              <option value="AFTER_CYCLE">After the current cycle</option>
+              <option value="AFTER_JOB" selected>After the current job</option>
+              <option value="SCHEDULED">At a specific later point</option>
+            </select>
+          </label>
+          <label class="full"><span>Reason</span>
+            <select id="requestReason">
+              <option>Customer shipment risk</option>
+              <option>Engineering test priority</option>
+              <option>Material now available</option>
+              <option>Quality containment</option>
+              <option>Leadership request</option>
+            </select>
+          </label>
+          <label class="full"><span>Optional note — shown to the machinist and stored in the audit trail</span>
+            <textarea id="requestNote" placeholder="Anything the machinist should know"></textarea></label>
+        </div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="requestCancel">Cancel</button>
+        <button class="btn primary" type="submit" id="requestSubmit">Submit request</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<!-- Add work to a machine's queue -->
+<dialog id="addJobDialog" aria-labelledby="addJobTitle">
+  <div class="dialog-head">
+    <div>
+      <h3 id="addJobTitle">Add work to this machine</h3>
+      <p class="muted" id="addJobSubtitle"></p>
+    </div>
+    <button class="btn small" id="addJobClose" type="button">Close</button>
+  </div>
+  <div class="dialog-body">
+    <div class="tabs source-tabs" role="tablist" aria-label="Where the work comes from">
+      <button class="btn source-tab active" role="tab" id="sourceReleased" aria-selected="true" type="button">Released work order</button>
+      <button class="btn source-tab" role="tab" id="sourceUnplanned" aria-selected="false" type="button">Unplanned work</button>
+    </div>
+
+    <section id="releasedPane">
+      <p class="notice">Released production orders from Dynamics 365 that are not yet on a machine.
+        Adding one records <strong>where it runs</strong> — it never creates or edits the order itself.</p>
+      <div id="releasedList" class="order-list"></div>
+      <div id="assignIssues"></div>
+      <div class="form">
+        <label class="full"><span>Queue position</span><select id="addJobPosition"></select></label>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="addJobCancel">Cancel</button>
+        <button class="btn primary" type="button" id="addJobConfirm" disabled>Add to queue</button>
+      </div>
+    </section>
+
+    <section id="unplannedPane" hidden>
+      <p class="notice warn">Work with no production order — rework, a tooling trial, a fixture proving run, a sample.
+        This is recorded so the machine time is visible. It is <strong>not</strong> a production order and never reaches
+        Dynamics 365. It stays flagged until a work order is attached.</p>
+      <form id="unplannedForm">
+        <div class="form">
+          <label class="full"><span>What kind of work is this?</span><select id="unplannedCategory"></select></label>
+          <label class="full"><span>One line — what is being done and to what</span>
+            <textarea id="unplannedDescription" placeholder="e.g. Re-cut bore on 6 rejected Sensor Housing A"></textarea></label>
+          <label><span>Estimated machine time (minutes)</span><select id="unplannedEstimate"></select></label>
+          <label><span>Authorised by</span><select id="unplannedAuthorisedBy"></select></label>
+          <label class="full"><span>Queue position</span><select id="unplannedPosition"></select></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn" type="button" id="unplannedCancel">Cancel</button>
+          <button class="btn primary" type="submit" id="unplannedConfirm">Add unplanned work</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</dialog>
+
+<!-- Downtime reason — raised automatically once a stoppage passes the threshold -->
+<dialog id="downtimeDialog" aria-labelledby="downtimeTitle">
+  <div class="dialog-head">
+    <div>
+      <h3 id="downtimeTitle">Why is this machine stopped?</h3>
+      <p class="muted" id="downtimeSubtitle"></p>
+    </div>
+  </div>
+  <div class="dialog-body">
+    <p class="notice urgent" id="downtimeAlarm" hidden></p>
+    <div id="downtimeReasons"></div>
+    <div class="dialog-actions dialog-actions-split">
+      <button class="btn" type="button" id="downtimeSnooze">Not now — ask again in 60s</button>
+      <span class="muted small">The stoppage stays flagged as unclassified until you answer.</span>
+    </div>
+  </div>
+</dialog>
+
+<!-- Generic confirm / short-form dialog -->
+<dialog id="promptDialog" aria-labelledby="promptTitle">
+  <form id="promptForm">
+    <div class="dialog-head">
+      <h3 id="promptTitle">—</h3>
+    </div>
+    <div class="dialog-body">
+      <p class="muted" id="promptDescription"></p>
+      <div class="form" id="promptFields"></div>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="promptCancel">Cancel</button>
+        <button class="btn primary" type="submit" id="promptConfirm">Confirm</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="data/downtime-reasons.js"></script>
+<script src="data/seed.js"></script>
+<script src="app/analytics.js"></script>
+<script src="app/state.js"></script>
+<script src="app/views.js"></script>
+<script src="app/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,864 @@
+/*
+ * Machinist Transparency — component styles.
+ *
+ * This file contains NO colour, typeface or shape literals. Every such value
+ * comes from a custom property defined in theme.css, so the application can be
+ * re-skinned to a corporate identity without touching a single component rule.
+ * tests/demo.test.mjs fails the build if a literal creeps back in.
+ *
+ * Shop-floor constraints these rules are written against:
+ *   - Minimum 44px interactive height (--tap). A gloved hand on a wall terminal
+ *     cannot reliably hit a 32px button, and the approve/reject decision is the
+ *     most important control on the page — so it is also the largest.
+ *   - Secondary text meets WCAG AA on every surface it is used on, in both
+ *     colour schemes.
+ *   - The machine picker must not consume a whole tablet screen; below 900px it
+ *     becomes a compact horizontal strip so the workspace stays above the fold.
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+h1, h2, h3, h4 { line-height: 1.25; }
+button, select, textarea, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+code { font-family: var(--font-mono); font-size: .85em; }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--skip-bg);
+  color: var(--skip-fg);
+  padding: 12px 18px;
+  z-index: 100;
+  font-weight: 700;
+}
+.skip-link:focus { left: 8px; top: 8px; }
+
+.muted { color: var(--muted); }
+.small { font-size: .84rem; }
+.nowrap { white-space: nowrap; }
+.right-align { text-align: right; }
+.empty { color: var(--muted); font-style: italic; margin: 4px 0; }
+
+/* ------------------------------------------------------------------ header */
+
+header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
+
+.header {
+  max-width: var(--container);
+  margin: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.brand h1 { font-size: 1.35rem; margin: 0; font-family: var(--font-display); font-weight: 700; }
+.brand-eyebrow {
+  display: var(--brand-eyebrow-display, block);
+  font-size: .74rem;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--on-brand-soft);
+  margin-bottom: 2px;
+}
+
+/* Corporate mark, if theme.css supplies one. Absent by default. */
+/*
+ * The mark sits on a white plate.
+ *
+ * Most corporate lockups — the Rochester Sensors one included — are dark ink on
+ * transparent, drawn for a white page. This header band is #004A98, so the mark
+ * would all but disappear on it. A recoloured or knocked-out variant is the
+ * brand team's call, not something to fake in CSS, so the plate gives the mark
+ * the background it was drawn for. Set --brand-logo-plate to `transparent` in
+ * theme.css if a light-on-dark variant is supplied instead.
+ *
+ * Width comes from the height and the file's own aspect ratio, both written by
+ * scripts/embed-logo.mjs, so the box matches the artwork instead of being
+ * guessed and letterboxed.
+ */
+.brand-mark {
+  display: var(--brand-logo-display, none);
+  height: var(--brand-logo-height, 40px);
+  width: calc(var(--brand-logo-height, 40px) * var(--brand-logo-aspect, 3.5));
+  box-sizing: content-box;
+  padding: var(--brand-logo-plate-pad, 8px 12px);
+  margin-bottom: 10px;
+  background-color: var(--brand-logo-plate, transparent);
+  background-image: var(--brand-logo);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  background-origin: content-box;
+  border-radius: var(--radius);
+}
+.tagline { margin: 2px 0 0; color: var(--on-brand-soft); }
+
+.header-right { display: grid; gap: 10px; justify-items: end; }
+.identity { display: grid; gap: 4px; justify-items: end; text-align: right; }
+.identity .muted { color: var(--on-brand-muted); }
+.identity-row { display: flex; gap: 6px; align-items: center; }
+.identity-row select {
+  min-height: var(--tap);
+  padding: 6px 10px;
+  border: 1px solid var(--on-brand-border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: .92rem;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--on-brand);
+  border-color: var(--on-brand-border);
+  white-space: nowrap;
+}
+.btn.ghost:disabled { opacity: .5; }
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab {
+  min-height: var(--tap);
+  padding: 10px 16px;
+  border: 1px solid var(--on-brand-border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--on-brand);
+  font-weight: 700;
+}
+.tab[aria-selected="true"] { background: var(--on-brand); color: var(--brand); border-color: var(--on-brand); }
+
+.nojs { max-width: var(--container); margin: 16px auto; }
+
+/* --------------------------------------------------------- simulation bar */
+
+/* Now sits under the work, so the rule that separates it moved to the top. */
+.simbar { background: var(--simbar-bg); border-top: 1px solid var(--border); margin-top: 26px; }
+
+.simbar-inner {
+  max-width: var(--container);
+  margin: auto;
+  padding: 10px 0;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.simbar-inner::-webkit-scrollbar { height: 6px; }
+.sim-heading { display: grid; flex: none; }
+.sim-actions > * { flex: none; }
+.sim-tag {
+  font-weight: 800;
+  font-size: .72rem;
+  white-space: nowrap;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Free to wrap now that it sits at the foot; the tablet rule below still
+ * collapses it to one scrolling row where vertical space is the constraint. */
+.sim-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-left: auto; }
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .84rem;
+  color: var(--muted);
+}
+.inline select { min-height: 38px; padding: 4px 8px; }
+
+/* ------------------------------------------------------------------ layout */
+
+main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
+
+.top { margin-bottom: 18px; }
+.top h2 { margin: 0; }
+.top p { color: var(--muted); margin: 4px 0 0; }
+
+.choose {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.choose h3 { margin: 0; }
+
+/* ----------------------------------------------------------------- metrics */
+
+/* Sits below the machine strip as a collapsed panel, not a dashboard header.
+ * Margin only — a display rule here would beat the UA's [hidden] and leak the
+ * leadership board into the machinist view. */
+#metrics { margin-bottom: 18px; }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.metric {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 14px;
+}
+.metric.warn { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 7%, var(--card)); }
+.metric.bad { border-color: var(--red); background: color-mix(in srgb, var(--red) 7%, var(--card)); }
+.label { font-size: .78rem; color: var(--muted); }
+.value { font-size: 1.4rem; font-weight: 800; margin-top: 2px; }
+.value.small-value { font-size: 1.05rem; }
+.value .unit { font-size: .82rem; font-weight: 600; color: var(--muted); }
+.high-risk { color: var(--red); }
+.medium-risk { color: var(--amber); }
+.low-risk { color: var(--green); }
+.none-risk { color: var(--muted); }
+.scrap-count { color: var(--red); }
+
+/* ----------------------------------------------------------- machine strip */
+
+.machines {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 10px 0 18px;
+}
+
+.machine {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  padding: 14px;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--text);
+  min-height: var(--tap);
+}
+.machine.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+.machine .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.machine .name { font-size: 1.05rem; font-weight: 800; }
+.machine .wo { font-weight: 800; }
+.progress-line { display: flex; align-items: center; gap: 8px; }
+.progress-line .track { flex: 1; }
+
+.flags { display: flex; gap: 6px; flex-wrap: wrap; }
+.flag {
+  font-size: .74rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: var(--accent);
+}
+.flag.urgent { color: var(--red); }
+.flag.deferred { color: var(--amber); border-style: dashed; }
+.flag.quiet { color: var(--muted); }
+
+/* ------------------------------------------------------------------ panels */
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+.panel-head {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.panel-head h3 { margin: 0; font-size: 1.2rem; }
+.panel-head-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--border);
+  gap: 1px;
+  border-bottom: 1px solid var(--border);
+}
+.stat { background: var(--soft); padding: 12px 14px; }
+
+.content { padding: 14px; display: grid; gap: 10px; }
+
+/* -------------------------------------------------------------- disclosure */
+
+.section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+.section > summary {
+  padding: 13px 15px;
+  min-height: var(--tap);
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.section > summary .meta { color: var(--muted); font-size: .82rem; font-weight: 600; }
+/* An exception named on a collapsed panel must not read as quiet metadata. */
+.section > summary .meta.meta-bad { color: var(--red); font-weight: 700; }
+.section-body { padding: 14px; border-top: 1px solid var(--border); display: grid; gap: 12px; }
+
+/* --------------------------------------------------------------- job card */
+
+.job {
+  background: var(--soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.job .row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.wo { font-weight: 800; }
+.wo.big { font-size: 1.15rem; }
+
+/*
+ * A rule, not a loading bar.
+ *
+ * These were 10px and 14px rounded troughs filled with saturated brand blue —
+ * the shape of an XP bar or a download. The quantity is already stated in words
+ * beside every one of them ("34 of 50 complete · 68%"), so the graphic only has
+ * to give the eye a proportion at a glance. Four square pixels does that
+ * without pretending to be the primary read.
+ */
+.track {
+  height: 4px;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  border-radius: 0;
+  overflow: hidden;
+  display: block;
+}
+.track.big-track { height: 5px; }
+.bar { height: 100%; background: var(--accent-solid); display: block; }
+
+/* -------------------------------------------------------------- ETA block */
+
+.eta {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--card);
+  display: grid;
+  gap: 3px;
+}
+.eta.blocked { border-left-color: var(--red); }
+.eta-range { font-size: 1.25rem; font-weight: 800; }
+.eta-detail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: .88rem; }
+.eta-risk { font-size: .88rem; }
+.eta-basis { font-size: .8rem; color: var(--muted); }
+.advisory { margin: 4px 0 0; font-size: .8rem; color: var(--muted); font-style: italic; }
+
+/* ------------------------------------------------------------------ queue */
+
+.queue { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.q {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.pos {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--radius);
+  font-weight: 800;
+}
+.qmain { flex: 1; display: grid; gap: 2px; }
+.qeta { flex: none; text-align: right; font-size: .84rem; }
+.readiness { font-size: .78rem; font-weight: 700; }
+.readiness.ok { color: var(--green); }
+.readiness.warn { color: var(--amber); }
+
+/* --------------------------------------------------------------- requests */
+
+.request {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.request .row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.request-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.note {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-strong);
+  background: var(--soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: .9rem;
+}
+
+/* --------------------------------------------------------------- blockers */
+
+.blockers { display: grid; gap: 8px; }
+.blocker { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: grid; gap: 8px; }
+
+/* --------------------------------------------------------------- downtime */
+
+.downtime-prompt { display: grid; gap: 10px; }
+.reasons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+/* Downtime classification is the one thing a machinist does under pressure. */
+.reason {
+  min-height: 76px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  text-align: left;
+  padding: 12px 14px;
+}
+.reason-label { font-weight: 800; font-size: 1rem; }
+.reason-owner { font-size: .78rem; color: var(--muted); }
+
+/* ---------------------------------------------------------------- buttons */
+
+.btn {
+  min-height: var(--tap);
+  padding: 11px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font-weight: 700;
+}
+.btn:hover { background: var(--soft); }
+.btn.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-brand); }
+.btn.good { background: var(--green-solid); border-color: var(--green-solid); color: var(--on-brand); }
+.btn.bad { background: var(--red-solid); border-color: var(--red-solid); color: var(--on-brand); }
+.btn.primary:hover, .btn.good:hover, .btn.bad:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+/* "small" is a density hint, never a reason to drop below the tap target. */
+.btn.small { padding: 8px 12px; font-size: .86rem; min-height: 38px; }
+/* The simulation strip is demo chrome, not a shop-floor control, so it is the
+   one place a smaller target is appropriate. */
+.simbar .btn.small { min-height: 32px; padding: 5px 10px; font-size: .82rem; white-space: nowrap; }
+.simbar .inline select { min-height: 32px; }
+.simbar .inline { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- badges */
+
+/*
+ * Square tags, not pills.
+ *
+ * These were fully round (999px) sitting inside 4px containers — small
+ * elements rounder than the boxes they live in, in heavy bold micro-type on a
+ * pastel fill. That is achievement-chip vocabulary, and it was the single
+ * strongest reason the interface read as a game rather than an instrument.
+ *
+ * The colour now sits on the border and the text, not in a filled body: the
+ * same signal, carried the way an instrument carries it. Radius matches the
+ * containers, and the weight comes down from 800 to 700 so a status tag stops
+ * shouting louder than the work order beside it.
+ */
+.badge {
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: .74rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  display: inline-block;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.production { color: var(--green); }
+.setup { color: var(--amber); }
+.stopped, .fault { color: var(--red); }
+.deferred { color: var(--amber); border-style: dashed; }
+.ready, .unavailable, .off, .unknown, .planned_downtime { color: var(--muted); }
+
+/* ---------------------------------------------------------------- notices */
+
+.notice, .banner {
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 0;
+  font-size: .9rem;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--text);
+  border-left: 4px solid var(--accent);
+}
+.notice.ok, .banner.ok { background: color-mix(in srgb, var(--green) 10%, transparent); border-left-color: var(--green); }
+.notice.warn, .banner.warn { background: color-mix(in srgb, var(--amber) 12%, transparent); border-left-color: var(--amber); }
+.notice.urgent, .banner.urgent { background: color-mix(in srgb, var(--red) 10%, transparent); border-left-color: var(--red); }
+.banner { margin: 0 0 4px; }
+
+/* ----------------------------------------------------------------- health */
+
+.health { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; font-weight: 600; }
+.health .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.health.ok { color: var(--green); }
+.health.warn { color: var(--amber); }
+.health.bad { color: var(--red); }
+
+/* ----------------------------------------------------------------- charts */
+
+.chart { margin: 4px 0; }
+
+.pareto { display: grid; gap: 7px; }
+.pareto-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) 3fr minmax(110px, auto);
+  gap: 10px;
+  align-items: center;
+  font-size: .86rem;
+}
+.pareto-bar { background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: var(--radius); height: 16px; overflow: hidden; }
+.pareto-bar .fill { height: 100%; background: var(--amber); }
+.pareto-value { text-align: right; font-variant-numeric: tabular-nums; }
+
+.histogram {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 130px;
+  padding-top: 8px;
+}
+.hbar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.hfill {
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+  min-height: 2px;
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.hcount { position: absolute; top: -17px; font-size: .72rem; color: var(--muted); font-weight: 700; }
+.hlabel { text-align: center; font-size: .7rem; color: var(--muted); margin-top: 4px; }
+
+/* ----------------------------------------------------------------- tables */
+
+.table-scroll { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.table th, .table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.table th { font-size: .76rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.table.audit { min-width: 900px; }
+.table tbody tr:hover { background: var(--soft); }
+
+/* ---------------------------------------------------------------- dialogs */
+
+dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--text);
+  overflow: auto;
+}
+dialog::backdrop { background: var(--backdrop); }
+
+.dialog-head {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+.dialog-head h3 { margin: 0; }
+.dialog-head p { margin: 4px 0 0; }
+.dialog-body { padding: 18px; display: grid; gap: 14px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin: 0; }
+legend { font-size: .8rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 4px; }
+
+.modal-machines { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.modal-machine {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  padding: 12px;
+  min-height: var(--tap);
+}
+.modal-machine.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+
+.form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form label { display: grid; gap: 5px; font-size: .84rem; font-weight: 700; color: var(--muted); }
+.form label.full { grid-column: 1 / -1; }
+select, textarea {
+  width: 100%;
+  min-height: var(--tap);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-weight: 500;
+}
+textarea { min-height: 80px; resize: vertical; }
+
+
+
+/* --------------------------------------------------- operations in a part */
+
+.op-headline {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--soft);
+}
+.op-name { font-size: 1.1rem; font-weight: 800; margin-top: 2px; }
+.op-percent { font-size: 1.6rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+
+.ops { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.op {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.op.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.op.done { opacity: .62; }
+.op.unposted { border-style: dashed; opacity: .72; }
+.op.unposted .op-track { visibility: hidden; }
+.op-seq {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--radius); font-weight: 850; font-size: .82rem;
+}
+.op.active .op-seq { background: var(--accent-solid); color: var(--on-brand); }
+.op.done .op-seq { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
+.op-main { flex: 1; display: grid; gap: 3px; min-width: 0; }
+.op-title { font-weight: 700; }
+.op-track { height: 4px; }
+.op-est { flex: none; font-size: .82rem; font-variant-numeric: tabular-nums; }
+
+.stats.five { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 900px) {
+  .stats.five { grid-template-columns: repeat(2, 1fr); }
+  .op { flex-wrap: wrap; }
+}
+
+/* ------------------------------------------------------------ adding work */
+
+.source-tabs { margin-bottom: 14px; }
+.source-tab { flex: 1; }
+.source-tab[aria-selected="true"] { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-brand); }
+
+.order-list { display: grid; gap: 8px; margin: 12px 0; max-height: 320px; overflow-y: auto; }
+.order {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  width: 100%;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  padding: 12px 14px;
+  min-height: var(--tap);
+}
+.order.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+.order:disabled { opacity: .55; cursor: not-allowed; }
+.order .row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.order-flags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
+.unplanned-badge {
+  font-size: .72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--amber);
+  color: var(--amber);
+  background: transparent;
+}
+
+/* ------------------------------------------------- machinist queue controls */
+
+/*
+ * The machinist owns this queue, so the controls sit on the row itself rather
+ * than behind a request. Sized for a gloved hand like every other control.
+ */
+.qcontrols { display: flex; gap: 6px; align-items: center; flex: none; }
+.qbtn {
+  width: var(--tap);
+  min-height: var(--tap);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font-size: .9rem;
+  line-height: 1;
+}
+.qbtn:hover:not(:disabled) { background: var(--soft); }
+.qbtn:disabled { opacity: .35; cursor: not-allowed; }
+
+.dialog-actions-split { justify-content: space-between; align-items: center; }
+
+.queue-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 900px) {
+  .q { flex-wrap: wrap; }
+  .qcontrols { width: 100%; justify-content: flex-end; }
+}
+
+/* ------------------------------------------------------------------ toast */
+
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(420px, calc(100vw - 36px));
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  z-index: 40;
+  box-shadow: var(--shadow);
+  font-weight: 600;
+}
+/*
+ * A confirmation is not a celebration.
+ *
+ * Routine success used to arrive as a saturated green box in the corner —
+ * "Signed in as R. Delgado" styled like an achievement unlocked. Congratulating
+ * someone for signing in is the clearest tell that an interface thinks it is a
+ * game. Success now uses the neutral surface and says what happened; failure
+ * keeps the red, because a rejected action is the one thing that genuinely
+ * has to interrupt.
+ */
+.toast.ok { background: var(--toast-bg); }
+.toast.bad { background: var(--red-solid); font-weight: 700; }
+
+.footer { margin-top: 24px; color: var(--muted); font-size: .86rem; }
+.footer p { margin: 4px 0; }
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 900px) {
+  /*
+   * Tablet budget: the machine picker and the chrome above it must not push the
+   * workspace off screen. Everything here exists to keep #panel near the fold on
+   * a 1180px-tall shop tablet.
+   */
+  header { padding: 10px 14px; }
+  .header { gap: 10px; }
+  .brand h1 { font-size: 1.15rem; }
+  .tagline { display: none; }
+  .header-right { flex: 1 1 100%; justify-items: stretch; gap: 6px; }
+  .identity { grid-auto-flow: column; justify-items: start; justify-content: start; gap: 6px; align-items: baseline; text-align: left; }
+  .identity .small { display: none; }
+  .tabs { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .tab { padding: 10px 8px; }
+
+  /* One scrolling row rather than a wrapped block of controls. */
+  .simbar-inner { flex-wrap: nowrap; overflow-x: auto; padding: 8px 14px; gap: 10px; }
+  .sim-heading { flex: none; }
+  .sim-heading .small { display: none; }
+  .sim-actions { flex-wrap: nowrap; }
+  .sim-actions > * { flex: none; }
+
+  main { padding-top: 14px; }
+  .top { margin-bottom: 12px; }
+  .top p { font-size: .88rem; }
+
+  /* Compact horizontal strip so the workspace stays above the fold on a tablet. */
+  .machines {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 6px;
+    margin: 8px 0 14px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .machine {
+    flex: 0 0 min(72vw, 280px);
+    scroll-snap-align: start;
+    padding: 10px 12px;
+    gap: 4px;
+  }
+  .machine .muted.small { display: none; } /* collector health stays in the panel head */
+  .machine .name { font-size: 1rem; }
+
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .reasons { grid-template-columns: repeat(2, 1fr); }
+  .modal-machines { grid-template-columns: 1fr; }
+  .pareto-row { grid-template-columns: 1fr; gap: 2px; }
+  .pareto-value { text-align: left; }
+}
+
+@media (max-width: 560px) {
+  header, main, .simbar-inner { padding-left: 14px; padding-right: 14px; }
+  .metrics, .stats, .form { grid-template-columns: 1fr; }
+  .reasons { grid-template-columns: 1fr; }
+  .header-right { justify-items: start; }
+  .identity { justify-items: start; text-align: left; }
+  .q { flex-wrap: wrap; }
+  .qeta { text-align: left; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
