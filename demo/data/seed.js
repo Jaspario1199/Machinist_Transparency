@@ -67,6 +67,21 @@
        * Demo identities. The real system takes these from Entra ID; the point
        * here is that every audit row names a person, not just a role.
        */
+      /**
+       * The people who use this terminal. A wall terminal is shared: several
+       * machinists across a shift, plus engineering and management looking over
+       * a shoulder. Decisions are attributed to whoever is signed in.
+       */
+      people: [
+        { name: 'R. Delgado', role: 'Machinist', title: 'CNC Machinist — Mills' },
+        { name: 'J. Varga', role: 'Machinist', title: 'CNC Machinist — Lathes' },
+        { name: 'M. Nakamura', role: 'Machinist', title: 'CNC Machinist — Second shift' },
+        { name: 'P. Osei', role: 'Machinist', title: 'Shop-floor supervisor' },
+        { name: 'T. Okafor', role: 'Engineer / PM', title: 'Manufacturing Engineer' },
+        { name: 'L. Bianchi', role: 'Engineer / PM', title: 'Project Manager' },
+        { name: 'S. Whitfield', role: 'Leadership', title: 'Operations Manager' },
+      ],
+
       actors: {
         machinist: { name: 'R. Delgado', role: 'Machinist', title: 'CNC Machinist — Mills' },
         engineer: { name: 'T. Okafor', role: 'Engineer / PM', title: 'Manufacturing Engineer' },

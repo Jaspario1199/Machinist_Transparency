@@ -24,9 +24,12 @@
     </div>
     <div class="header-right">
       <div class="identity">
-        <span class="muted">Signed in as</span>
-        <strong id="actorName">—</strong>
-        <span class="muted small">Demo identity — real deployment uses company sign-in</span>
+        <label class="muted" for="actorSelect">Signed in at this terminal</label>
+        <div class="identity-row">
+          <select id="actorSelect" aria-describedby="actorName"></select>
+          <button class="btn small ghost" id="signOutButton" type="button">Sign out</button>
+        </div>
+        <span class="muted small" id="actorName">—</span>
       </div>
       <nav>
         <div class="tabs" role="tablist" aria-label="Choose your role">

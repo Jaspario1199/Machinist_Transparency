@@ -149,9 +149,19 @@
         aria-label="Quantity complete"><div class="bar" style="width:${p}%"></div></div>
       <div class="row muted"><span>${esc(machine.active.done)} of ${esc(machine.active.qty)} complete</span>
         <span>${esc(machine.active.qty - machine.active.done)} remaining · ${p}%</span></div>
+      ${/*
+        * Good quantity and cycles run are two different numbers, and the gap
+        * between them is scrap. Counting a completed cycle as a good part is
+        * how a job reports 100% and then ships short. Scrap moves a piece from
+        * good to scrapped rather than deleting it, so the machine time stays
+        * visible in the cycle history that feeds the ETA.
+        */''}
+      ${machine.active.scrap ? `<div class="row muted small"><span class="scrap-count">${esc(machine.active.scrap)}
+        scrapped · ${esc((machine.active.cyclesRun ?? machine.active.done + machine.active.scrap))} cycles run</span></div>` : ''}
+      ${technical ? '<div class="row"><button class="btn" data-act="record-scrap" data-focus-key="record-scrap">Record scrap</button></div>' : ''}
       ${etaBlock(state, machine, now)}
       <div class="row muted small">
-        <span>Due ${esc(dateTime(machine.active.dueAt))}</span>
+        <span>${machine.active.dueAt == null ? 'No committed due date' : `Due ${esc(dateTime(machine.active.dueAt))}`}</span>
         <span>Updated ${esc(ago(machine.collector.lastEventAt, now))}</span>
       </div>
       ${technical ? `<div class="row muted small tech">
@@ -292,9 +302,13 @@
       <p class="muted small">${p.scope === 'JOB'
         ? 'This posted file runs the whole quantity in one go, so the figures above are for the entire job.'
         : 'This posted file makes one piece and is re-run for each. The figures above are for the piece being cut now.'}</p>
-      ${library ? `<p class="muted small">Stored program <code>${esc(machine.active.program)}</code> —
-        ${esc(library.lifetimeRuns.toLocaleString())} lifetime runs across ${esc(library.jobs)} job${library.jobs === 1 ? '' : 's'}.
-        Cycle history follows the program, so a repeat order does not start from nothing.</p>` : ''}
+      ${library ? `<p class="muted small">Stored program <code>${esc(machine.active.program)}</code> ${esc(library.rev)} —
+        ${esc(library.lifetimeRuns.toLocaleString())} run${library.lifetimeRuns === 1 ? '' : 's'} across
+        ${esc(library.jobs)} job${library.jobs === 1 ? '' : 's'} <strong>shop-wide, all machines</strong>.
+        The estimates above are not drawn from that figure: they use the
+        ${esc(A.relevantCycles(machine).length)} cycle${A.relevantCycles(machine).length === 1 ? '' : 's'} of this program
+        measured on ${esc(machine.name)} itself, because the same program on a different spindle and fixture
+        is a different cycle time.</p>` : ''}
       <p class="muted small">Source: ${esc(machine.active.camSource ?? 'CAM operation list')} ·
         live block number from the ${esc(machine.collector.protocol)} collector. Read-only; nothing is sent to the machine.</p>`;
   }
@@ -315,7 +329,14 @@
         ? `<span class="unplanned-badge">Unplanned · ${esc(job.unplanned.categoryLabel)} · no work order</span>`
         : '';
 
+      // "Move to top" exists because a nine-deep queue otherwise needs eight
+      // presses to promote the last job, and on a wall terminal that is how a
+      // machinist ends up not reordering at all. It is distinct from "Run this
+      // now", which interrupts the current job rather than queueing next.
       const rowControls = controls ? `<span class="qcontrols">
+        <button class="qbtn" data-queue-move="top" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-top"
+          ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} to the top of the queue"
+          title="Move to the top of the queue">⤒</button>
         <button class="qbtn" data-queue-move="up" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-up"
           ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} up">▲</button>
         <button class="qbtn" data-queue-move="down" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-down"
@@ -372,6 +393,20 @@
       ? '<p class="notice warn">Approved but <strong>not yet in effect</strong> — the queue changes when the current job completes.</p>'
       : '';
 
+    // An approval that lapsed says so on the request itself, not only in the
+    // audit trail. Until somebody acknowledges it, it also counts on the
+    // leadership tiles — an approval that silently did nothing is worse than a
+    // rejection, because the requester believes it happened.
+    const expiredNotice = request.status === 'EXPIRED'
+      ? `<p class="notice urgent"><strong>This approval never took effect.</strong>
+          ${esc(request.expiredReason ?? 'The work order was no longer in the queue when the current job finished')}.
+          The queue was not changed. Submit a new request if the move is still needed.
+          ${request.expiryAcknowledged
+            ? '<br><span class="muted small">Acknowledged.</span>'
+            : `<br><button class="btn small" data-ack-expiry="${esc(request.id)}"
+                 data-focus-key="ack-${esc(request.id)}">Acknowledge</button>`}</p>`
+      : '';
+
     return `<article class="request">
       <div class="row">
         <div>
@@ -383,6 +418,7 @@
       </div>
       ${request.note ? `<blockquote class="note">${esc(request.note)}</blockquote>` : ''}
       ${deferredNotice}
+      ${expiredNotice}
       ${decision}
       ${showControls && request.status === 'PENDING' ? `<div class="request-actions">
         <button class="btn good decision" data-request="${request.id}" data-action="approve" data-focus-key="req-${request.id}-approve">Approve now</button>
@@ -559,7 +595,22 @@
     if (A.BLOCKED_STATES.includes(machine.state)) controls.push('<button class="btn good" data-act="resume" data-focus-key="resume">Resume machine</button>');
     else controls.push('<button class="btn bad" data-act="stop" data-focus-key="stop">Stop machine</button>');
 
+    /*
+     * First-article hold. The machine stops itself after the first piece on a
+     * job that needs one, and stays stopped until somebody says the piece is
+     * good. This is a hold, not a stoppage to be explained away: it is the one
+     * downtime the shop wants, so it is surfaced as its own decision rather
+     * than left to the generic reason grid.
+     */
+    const firstOff = machine.active.awaitingFirstOff
+      ? `<p class="banner urgent"><strong>First article waiting.</strong> The first piece off
+          ${esc(machine.active.wo)} is complete and production is held until it is measured.
+          <button class="btn good" data-act="first-off-approve" data-focus-key="first-off-approve">Approve — run the rest</button>
+          <button class="btn bad" data-act="first-off-reject" data-focus-key="first-off-reject">Reject — scrap and hold</button></p>`
+      : '';
+
     return `${panelHead(state, machine, 'Machinist controls for this machine only', now, `<div class="head-actions">${controls.join('')}</div>`)}
+      ${firstOff}
       ${needsReason ? `<p class="banner urgent"><strong>Reason needed.</strong> ${esc(machine.name)} has been stopped
         ${Math.round((now - machine.stateSince) / 60000)} min with no cause recorded. It stays flagged here, on the machine
         button and on the leadership board until someone answers.
@@ -614,7 +665,7 @@
       <div class="stats four">
         <div class="stat"><div class="label">State</div><div class="value">${esc(machine.state)}</div></div>
         <div class="stat"><div class="label">Advisory completion</div><div class="value small-value">${esc(A.formatRange(eta))}</div></div>
-        <div class="stat"><div class="label">Due-date risk</div><div class="value small-value ${esc(risk.level.toLowerCase())}-risk">${esc(risk.level)}</div></div>
+        <div class="stat"><div class="label">Due-date risk</div><div class="value small-value ${esc(risk.level.toLowerCase())}-risk">${esc(risk.level === 'NONE' ? 'N/A' : risk.level)}</div></div>
         <div class="stat"><div class="label">Open blockers</div><div class="value">${blockers.length}</div></div>
       </div>
       <div class="content">
@@ -632,6 +683,7 @@
     const stopped = state.machines.filter((m) => A.BLOCKED_STATES.includes(m.state)).length;
     const pending = state.requests.filter((r) => r.status === 'PENDING').length;
     const deferred = state.requests.filter((r) => r.status === 'APPROVED_AFTER_CURRENT').length;
+    const lapsed = S.unacknowledgedExpiries(state).length;
     const unclassified = state.machines.filter((m) => S.needsDowntimeReason(state, m)).length;
     const blockers = state.blockers.filter((b) => b.status !== 'CLOSED').length;
     const atRisk = state.machines.filter((m) => A.dueDateRisk(state, m, now).level === 'HIGH').length;
@@ -646,6 +698,7 @@
       { label: 'Open blockers', value: blockers, kind: blockers ? 'warn' : '' },
       { label: 'Jobs at due-date risk', value: atRisk, kind: atRisk ? 'bad' : '' },
       { label: 'Unclassified stoppages', value: unclassified, kind: unclassified ? 'bad' : '' },
+      { label: 'Approvals that lapsed', value: lapsed, kind: lapsed ? 'bad' : '' },
       { label: 'Jobs queued', value: state.machines.reduce((a, m) => a + m.queue.length, 0) },
       { label: 'Unplanned work, no order', value: unplannedCount, kind: unplannedCount ? 'warn' : '' },
       { label: 'Released, not yet on a machine', value: state.unassignedOrders.length },

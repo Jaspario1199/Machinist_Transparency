@@ -103,8 +103,25 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
 }
 
 .header-right { display: grid; gap: 10px; justify-items: end; }
-.identity { display: grid; justify-items: end; text-align: right; }
+.identity { display: grid; gap: 4px; justify-items: end; text-align: right; }
 .identity .muted { color: var(--on-brand-muted); }
+.identity-row { display: flex; gap: 6px; align-items: center; }
+.identity-row select {
+  min-height: var(--tap);
+  padding: 6px 10px;
+  border: 1px solid var(--on-brand-border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: .92rem;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--on-brand);
+  border-color: var(--on-brand-border);
+}
+.btn.ghost:disabled { opacity: .5; }
 
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .tab {
@@ -196,6 +213,8 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 .high-risk { color: var(--red); }
 .medium-risk { color: var(--amber); }
 .low-risk { color: var(--green); }
+.none-risk { color: var(--muted); }
+.scrap-count { color: var(--red); }
 
 /* ----------------------------------------------------------- machine strip */
 

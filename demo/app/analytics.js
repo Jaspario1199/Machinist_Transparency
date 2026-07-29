@@ -41,9 +41,12 @@
   /**
    * Cycles belonging to the work being done now.
    *
-   * Keyed on the PROGRAM, not the work order. A fully defined program is
-   * uploaded once and re-run for later orders, so a repeat job of a part the
-   * shop has cut 400 times must inherit that history instead of starting cold.
+   * Keyed on the PROGRAM, not the work order, and scoped to THIS MACHINE. A
+   * fully defined program is uploaded once and re-run for later orders, so a
+   * repeat job inherits what this machine already measured instead of starting
+   * cold. It deliberately does not pool cycles across machines: the same
+   * program on a different spindle, fixture and tool set is a different
+   * distribution, and averaging them would widen every range for no gain.
    * Falls back to the work order for work that has no program — unplanned jobs,
    * and older records from before programs were tracked.
    */
@@ -192,8 +195,24 @@
     });
   }
 
-  /** Is the active job projected to miss its due date? Used for leadership risk. */
+  /**
+   * Is the active job projected to miss its due date? Used for leadership risk.
+   *
+   * Unplanned work — rework, a fixture trial, a sample — has no production
+   * order and therefore no committed date. There is nothing to be at risk
+   * against, so it returns NONE rather than inventing a deadline and then
+   * reporting a breach of it. Leadership counts only HIGH, so NONE is excluded
+   * from the at-risk tile by construction.
+   */
   function dueDateRisk(state, machine, now) {
+    if (machine.active.dueAt == null) {
+      return {
+        level: 'NONE',
+        text: machine.active.unplanned
+          ? 'Unplanned work — no production order, so no committed date to miss'
+          : 'No committed due date on this job',
+      };
+    }
     const eta = etaForActiveJob(state, machine);
     if (eta.blocked) return { level: 'HIGH', text: 'Blocked — completion cannot be projected' };
     const latest = now + eta.highMin * MIN;

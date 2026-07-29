@@ -291,8 +291,25 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
 }
 
 .header-right { display: grid; gap: 10px; justify-items: end; }
-.identity { display: grid; justify-items: end; text-align: right; }
+.identity { display: grid; gap: 4px; justify-items: end; text-align: right; }
 .identity .muted { color: var(--on-brand-muted); }
+.identity-row { display: flex; gap: 6px; align-items: center; }
+.identity-row select {
+  min-height: var(--tap);
+  padding: 6px 10px;
+  border: 1px solid var(--on-brand-border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: .92rem;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--on-brand);
+  border-color: var(--on-brand-border);
+}
+.btn.ghost:disabled { opacity: .5; }
 
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .tab {
@@ -384,6 +401,8 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 .high-risk { color: var(--red); }
 .medium-risk { color: var(--amber); }
 .low-risk { color: var(--green); }
+.none-risk { color: var(--muted); }
+.scrap-count { color: var(--red); }
 
 /* ----------------------------------------------------------- machine strip */
 
@@ -999,9 +1018,12 @@ textarea { min-height: 80px; resize: vertical; }
     </div>
     <div class="header-right">
       <div class="identity">
-        <span class="muted">Signed in as</span>
-        <strong id="actorName">—</strong>
-        <span class="muted small">Demo identity — real deployment uses company sign-in</span>
+        <label class="muted" for="actorSelect">Signed in at this terminal</label>
+        <div class="identity-row">
+          <select id="actorSelect" aria-describedby="actorName"></select>
+          <button class="btn small ghost" id="signOutButton" type="button">Sign out</button>
+        </div>
+        <span class="muted small" id="actorName">—</span>
       </div>
       <nav>
         <div class="tabs" role="tablist" aria-label="Choose your role">
@@ -1392,6 +1414,21 @@ window.DOWNTIME_REASONS = [
        * Demo identities. The real system takes these from Entra ID; the point
        * here is that every audit row names a person, not just a role.
        */
+      /**
+       * The people who use this terminal. A wall terminal is shared: several
+       * machinists across a shift, plus engineering and management looking over
+       * a shoulder. Decisions are attributed to whoever is signed in.
+       */
+      people: [
+        { name: 'R. Delgado', role: 'Machinist', title: 'CNC Machinist — Mills' },
+        { name: 'J. Varga', role: 'Machinist', title: 'CNC Machinist — Lathes' },
+        { name: 'M. Nakamura', role: 'Machinist', title: 'CNC Machinist — Second shift' },
+        { name: 'P. Osei', role: 'Machinist', title: 'Shop-floor supervisor' },
+        { name: 'T. Okafor', role: 'Engineer / PM', title: 'Manufacturing Engineer' },
+        { name: 'L. Bianchi', role: 'Engineer / PM', title: 'Project Manager' },
+        { name: 'S. Whitfield', role: 'Leadership', title: 'Operations Manager' },
+      ],
+
       actors: {
         machinist: { name: 'R. Delgado', role: 'Machinist', title: 'CNC Machinist — Mills' },
         engineer: { name: 'T. Okafor', role: 'Engineer / PM', title: 'Manufacturing Engineer' },
@@ -1697,9 +1734,12 @@ window.DOWNTIME_REASONS = [
   /**
    * Cycles belonging to the work being done now.
    *
-   * Keyed on the PROGRAM, not the work order. A fully defined program is
-   * uploaded once and re-run for later orders, so a repeat job of a part the
-   * shop has cut 400 times must inherit that history instead of starting cold.
+   * Keyed on the PROGRAM, not the work order, and scoped to THIS MACHINE. A
+   * fully defined program is uploaded once and re-run for later orders, so a
+   * repeat job inherits what this machine already measured instead of starting
+   * cold. It deliberately does not pool cycles across machines: the same
+   * program on a different spindle, fixture and tool set is a different
+   * distribution, and averaging them would widen every range for no gain.
    * Falls back to the work order for work that has no program — unplanned jobs,
    * and older records from before programs were tracked.
    */
@@ -1848,8 +1888,24 @@ window.DOWNTIME_REASONS = [
     });
   }
 
-  /** Is the active job projected to miss its due date? Used for leadership risk. */
+  /**
+   * Is the active job projected to miss its due date? Used for leadership risk.
+   *
+   * Unplanned work — rework, a fixture trial, a sample — has no production
+   * order and therefore no committed date. There is nothing to be at risk
+   * against, so it returns NONE rather than inventing a deadline and then
+   * reporting a breach of it. Leadership counts only HIGH, so NONE is excluded
+   * from the at-risk tile by construction.
+   */
   function dueDateRisk(state, machine, now) {
+    if (machine.active.dueAt == null) {
+      return {
+        level: 'NONE',
+        text: machine.active.unplanned
+          ? 'Unplanned work — no production order, so no committed date to miss'
+          : 'No committed due date on this job',
+      };
+    }
     const eta = etaForActiveJob(state, machine);
     if (eta.blocked) return { level: 'HIGH', text: 'Blocked — completion cannot be projected' };
     const latest = now + eta.highMin * MIN;
@@ -2137,7 +2193,7 @@ window.DOWNTIME_REASONS = [
 (function () {
   const A = window.MT_ANALYTICS;
   const MIN = 60 * 1000;
-  const STORAGE_KEY = 'mt-demo-state-v2';
+  const STORAGE_KEY = 'mt-demo-state-v3';
 
   const REJECTION_REASONS = [
     'Material unavailable',
@@ -2156,6 +2212,32 @@ window.DOWNTIME_REASONS = [
     SCHEDULED: 'At a specific later point',
   };
 
+  /**
+   * Who may do what, enforced HERE rather than by which buttons get rendered.
+   * Hiding a control is a courtesy; refusing the operation is the rule.
+   */
+  const PERMISSIONS = {
+    Machinist: [
+      'decideRequest', 'reorderQueue', 'switchActiveJob', 'classifyDowntime',
+      'completeSetup', 'startNextJob', 'stopMachine', 'resumeMachine',
+      'addOrderToQueue', 'addUnplannedJob', 'removeFromQueue', 'updateBlocker',
+      'recordScrap', 'setMachinistEstimate', 'finaliseProcess', 'approveFirstOff',
+      'submitRequest',
+    ],
+    'Engineer / PM': ['submitRequest', 'updateBlocker'],
+    Leadership: ['submitRequest'],
+  };
+
+  function may(state, action) {
+    const person = state.signedIn;
+    if (!person) return { ok: false, reason: 'Nobody is signed in at this terminal' };
+    const allowed = PERMISSIONS[person.role] ?? [];
+    if (!allowed.includes(action)) {
+      return { ok: false, reason: `${person.role} may not ${action.replace(/([A-Z])/g, ' $1').toLowerCase().trim()}` };
+    }
+    return { ok: true };
+  }
+
   const ALARM_CODES = ['ALM 402 spindle load', 'ALM 118 tool life expired', 'ALM 231 low coolant', 'ALM 507 door interlock'];
 
   function clone(value) {
@@ -2168,11 +2250,15 @@ window.DOWNTIME_REASONS = [
     const seed = window.MT_SEED(now);
 
     const state = {
-      version: 2,
+      version: 3,
       role: 'machinist',
       selected: 'cnc-1',
       shiftStart: seed.shiftStart,
       actors: seed.actors,
+      people: seed.people,
+      // Who is physically at this terminal. Every audit row names this person,
+      // not the role — a shared wall terminal sees several people per shift.
+      signedIn: seed.people.find((x) => x.role === 'Machinist'),
       machines: seed.machines,
       unassignedOrders: seed.unassignedOrders,
       programLibrary: seed.programLibrary,
@@ -2235,7 +2321,41 @@ window.DOWNTIME_REASONS = [
   }
 
   function currentActor(state) {
-    return state.actors[state.role];
+    return state.signedIn ?? { name: 'Not signed in', role: 'Unknown', title: '' };
+  }
+
+  /**
+   * Shift handover. Signing in and out is itself audited, because an audit
+   * trail that cannot say who was at the terminal is not an audit trail.
+   */
+  function signIn(state, name) {
+    const person = state.people.find((x) => x.name === name);
+    if (!person) return { ok: false, reason: 'Unknown person' };
+    const previous = state.signedIn;
+    state.signedIn = person;
+    state.role = { Machinist: 'machinist', 'Engineer / PM': 'engineer', Leadership: 'leadership' }[person.role] ?? state.role;
+    record(state, {
+      actor: person.name,
+      role: person.role,
+      event: previous ? 'SHIFT_HANDOVER' : 'SIGNED_IN',
+      summary: previous
+        ? `${person.name} (${person.role}) took over the terminal from ${previous.name}`
+        : `${person.name} (${person.role}) signed in`,
+    });
+    return { ok: true, message: `Signed in as ${person.name}` };
+  }
+
+  function signOut(state) {
+    const previous = state.signedIn;
+    if (!previous) return { ok: false, reason: 'Nobody is signed in' };
+    record(state, {
+      actor: previous.name,
+      role: previous.role,
+      event: 'SIGNED_OUT',
+      summary: `${previous.name} signed out of the terminal`,
+    });
+    state.signedIn = null;
+    return { ok: true, message: 'Signed out' };
   }
 
   /** Builds an active-job record from a queue entry, preserving partial progress. */
@@ -2313,6 +2433,8 @@ window.DOWNTIME_REASONS = [
   }
 
   function submitRequest(state, input) {
+    const permitted = may(state, 'submitRequest');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, input.machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (!machine.queue.length) {
@@ -2320,6 +2442,15 @@ window.DOWNTIME_REASONS = [
     }
     const job = machine.queue.find((q) => q.wo === input.wo);
     if (!job) return { ok: false, reason: `${input.wo} is not in ${machine.name}'s queue` };
+    const already = state.requests.find((r) => r.machineId === machine.id && r.wo === input.wo
+      && (r.status === 'PENDING' || r.status === 'APPROVED_AFTER_CURRENT'));
+    if (already) {
+      return {
+        ok: false,
+        reason: `There is already an undecided request to move ${input.wo} (from ${already.requestedBy.name}). `
+          + 'Chasing it with a second one does not make it happen faster.',
+      };
+    }
 
     const actor = currentActor(state);
     const before = queueWos(machine);
@@ -2362,6 +2493,8 @@ window.DOWNTIME_REASONS = [
    * action: 'approve' | 'reject' | 'defer' | 'counter'
    */
   function decideRequest(state, requestId, action, options = {}) {
+    const permitted = may(state, 'decideRequest');
+    if (!permitted.ok) return permitted;
     const request = state.requests.find((r) => r.id === requestId);
     if (!request) return { ok: false, reason: 'Request not found' };
     if (request.status !== 'PENDING') {
@@ -2438,6 +2571,34 @@ window.DOWNTIME_REASONS = [
     return { ok: true, message: action === 'counter' ? `Approved at position ${targetPos}` : 'Request approved' };
   }
 
+  /**
+   * Clears the unacknowledged flag on a lapsed approval.
+   *
+   * Anyone may do this — the point is that a human has seen it, not that a
+   * particular role has. It does not change the queue and does not revive the
+   * request; the requester has to submit a new one if they still want the move.
+   */
+  function acknowledgeExpiry(state, requestId) {
+    const request = state.requests.find((r) => r.id === requestId);
+    if (!request) return { ok: false, reason: 'Unknown request' };
+    if (request.status !== 'EXPIRED') return { ok: false, reason: 'That request did not lapse' };
+    if (request.expiryAcknowledged) return { ok: false, reason: 'Already acknowledged' };
+    request.expiryAcknowledged = true;
+    record(state, {
+      machineId: request.machineId,
+      event: 'REQUEST_EXPIRY_ACKNOWLEDGED',
+      wo: request.wo,
+      summary: `Lapsed approval for ${request.wo} acknowledged. A new request is needed if the move is still wanted.`,
+    });
+    return { ok: true, message: 'Acknowledged — submit a new request if the move is still needed' };
+  }
+
+  /** Lapsed approvals nobody has looked at yet. */
+  function unacknowledgedExpiries(state, machineId) {
+    return state.requests.filter((r) => r.status === 'EXPIRED' && !r.expiryAcknowledged
+      && (!machineId || r.machineId === machineId));
+  }
+
   /** Applies deferred approvals once the active job finishes. */
   function applyDeferredRequests(state, machine) {
     state.requests
@@ -2459,14 +2620,30 @@ window.DOWNTIME_REASONS = [
             after: queueWos(machine),
           });
         } else {
+          /*
+           * The approval lapsed — the work order left the queue before the
+           * current job finished, so there is nothing left to move.
+           *
+           * This used to be recorded in the audit trail and nowhere else,
+           * which meant the person who asked for the change was told
+           * "approved" and never told it had not happened. They would only
+           * find out by reading an audit row they have no reason to open. The
+           * lapse now carries its own reason and an unacknowledged flag, so it
+           * is shown on the request itself and counted for leadership until
+           * somebody clears it.
+           */
           r.status = 'EXPIRED';
+          r.expiredAt = Date.now();
+          r.expiredReason = result.reason;
+          r.expiryAcknowledged = false;
           record(state, {
             actor: 'System',
             role: 'System',
             machineId: machine.id,
             event: 'REQUEST_EXPIRED',
             wo: r.wo,
-            summary: `Deferred approval could not be applied — ${result.reason}`,
+            summary: `Deferred approval could not be applied — ${result.reason}. `
+              + `${r.requestedBy.name} (${r.requestedBy.role}) asked for this and it did not happen.`,
             before,
             after: before,
           });
@@ -2486,6 +2663,8 @@ window.DOWNTIME_REASONS = [
    * group defined in the same file.
    */
   function classifyDowntime(state, machineId, code, note = '') {
+    const permitted = may(state, 'classifyDowntime');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     const reason = reasonByCode(code);
     if (!machine || !reason) return { ok: false, reason: 'Unknown machine or reason code' };
@@ -2544,8 +2723,16 @@ window.DOWNTIME_REASONS = [
   }
 
   function updateBlocker(state, blockerId, status) {
+    const permitted = may(state, 'updateBlocker');
+    if (!permitted.ok) return permitted;
     const blocker = state.blockers.find((b) => b.id === blockerId);
     if (!blocker) return { ok: false, reason: 'Blocker not found' };
+    if (blocker.status === 'CLOSED') {
+      return { ok: false, reason: `That blocker was already closed at ${new Date(blocker.closedAt).toLocaleTimeString()}` };
+    }
+    if (blocker.status === status) {
+      return { ok: false, reason: `That blocker is already ${status.toLowerCase()}` };
+    }
     const actor = currentActor(state);
     blocker.status = status;
     if (status === 'ACKNOWLEDGED') blocker.ackAt = Date.now();
@@ -2612,6 +2799,8 @@ window.DOWNTIME_REASONS = [
 
   /** Machinist confirms setup is finished and the job can run. */
   function completeSetup(state, machineId) {
+    const permitted = may(state, 'completeSetup');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (machine.state !== 'SETUP') return { ok: false, reason: `${machine.name} is not in setup` };
@@ -2632,6 +2821,8 @@ window.DOWNTIME_REASONS = [
 
   /** Pull the next queued job onto a machine that has run out of work. */
   function startNextJob(state, machineId) {
+    const permitted = may(state, 'startNextJob');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (!machine.queue.length) return { ok: false, reason: `${machine.name} has no queued work` };
@@ -2654,6 +2845,8 @@ window.DOWNTIME_REASONS = [
   }
 
   function stopMachine(state, machineId) {
+    const permitted = may(state, 'stopMachine');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (A.BLOCKED_STATES.includes(machine.state)) return { ok: false, reason: 'Already stopped' };
@@ -2664,6 +2857,8 @@ window.DOWNTIME_REASONS = [
   }
 
   function resumeMachine(state, machineId) {
+    const permitted = may(state, 'resumeMachine');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (!A.BLOCKED_STATES.includes(machine.state)) return { ok: false, reason: 'Machine is not stopped' };
@@ -2734,6 +2929,8 @@ window.DOWNTIME_REASONS = [
    * docs/03 — quantity, due date, revision and priority remain D365's.
    */
   function addOrderToQueue(state, machineId, wo, position, acknowledged = false) {
+    const permitted = may(state, 'addOrderToQueue');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const index = state.unassignedOrders.findIndex((o) => o.wo === wo);
@@ -2790,6 +2987,8 @@ window.DOWNTIME_REASONS = [
    * reported separately so the total is visible rather than buried.
    */
   function addUnplannedJob(state, machineId, input) {
+    const permitted = may(state, 'addUnplannedJob');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const category = UNPLANNED_CATEGORIES.find((c) => c.code === input.category);
@@ -2816,7 +3015,10 @@ window.DOWNTIME_REASONS = [
       setupMin: 5,
       program: '—',
       requestedPriority: 3,
-      dueAt: Date.now() + estimateMin * MIN,
+      // Deliberately null. Unplanned work has no production order, so it has no
+      // committed date — fabricating one from the estimate would make every
+      // piece of rework read as a due-date breach the moment it overran.
+      dueAt: null,
       source: 'UNPLANNED',
       unplanned: {
         category: category.code,
@@ -2843,6 +3045,8 @@ window.DOWNTIME_REASONS = [
 
   /** Takes a job off a queue. D365 orders go back to the unassigned pool. */
   function removeFromQueue(state, machineId, wo, reason) {
+    const permitted = may(state, 'removeFromQueue');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const index = machine.queue.findIndex((q) => q.wo === wo);
@@ -2858,6 +3062,9 @@ window.DOWNTIME_REASONS = [
         part: job.part,
         rev: job.rev ?? 'Rev —',
         qty: job.qty,
+        // Carry the finished quantity with it. Dropping this loses real parts.
+        done: job.done ?? 0,
+        scrap: job.scrap ?? 0,
         cycleMedianMin: job.cycleMedianMin,
         cycleSigmaMin: job.cycleSigmaMin,
         setupMin: job.setupMin,
@@ -2870,6 +3077,21 @@ window.DOWNTIME_REASONS = [
         inspectionHold: job.readyCode === 'INSPECTION',
       });
     }
+
+    state.blockers
+      .filter((b) => b.machineId === machineId && b.wo === wo && b.status !== 'CLOSED')
+      .forEach((b) => {
+        b.status = 'CLOSED';
+        b.closedAt = Date.now();
+        record(state, {
+          actor: 'System',
+          role: 'System',
+          machineId,
+          event: 'BLOCKER_CLOSED',
+          wo,
+          summary: `Closed the ${b.label} blocker automatically — ${wo} is no longer on this machine`,
+        });
+      });
 
     record(state, {
       machineId,
@@ -2906,6 +3128,8 @@ window.DOWNTIME_REASONS = [
    * it appears. Revisions are audited so the estimate has a history.
    */
   function setMachinistEstimate(state, machineId, minutes, note = '') {
+    const permitted = may(state, 'setMachinistEstimate');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const value = Number(minutes);
@@ -2933,6 +3157,8 @@ window.DOWNTIME_REASONS = [
 
   /** Promote a settled prototype to a finalised, tracked program. */
   function finaliseProcess(state, machineId) {
+    const permitted = may(state, 'finaliseProcess');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (machine.active.programMode !== 'PROTOTYPE') return { ok: false, reason: 'This is not a prototype' };
@@ -2950,6 +3176,65 @@ window.DOWNTIME_REASONS = [
     return { ok: true, message: 'Process marked finalised' };
   }
 
+
+  /**
+   * Record scrap. A completed cycle is a cycle; it is only a good part if it
+   * passes. Good quantity is what D365 needs, so the two are counted apart and
+   * scrap moves one from good to scrap rather than vanishing.
+   */
+  function recordScrap(state, machineId, count, note = '') {
+    const permitted = may(state, 'recordScrap');
+    if (!permitted.ok) return permitted;
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const n = Math.floor(Number(count));
+    if (!Number.isFinite(n) || n < 1) return { ok: false, reason: 'How many pieces?' };
+    if (n > machine.active.done) {
+      return { ok: false, reason: `Only ${machine.active.done} good piece${machine.active.done === 1 ? '' : 's'} recorded so far` };
+    }
+    machine.active.done -= n;
+    machine.active.scrap = (machine.active.scrap ?? 0) + n;
+    record(state, {
+      machineId,
+      event: 'SCRAP_RECORDED',
+      wo: machine.active.wo,
+      summary: `${n} piece${n === 1 ? '' : 's'} scrapped on ${machine.active.wo}`
+        + `${note.trim() ? ` — ${note.trim()}` : ''}. Good quantity now ${machine.active.done} of ${machine.active.qty}.`,
+    });
+    return { ok: true, message: `${n} scrapped — good quantity now ${machine.active.done}` };
+  }
+
+  /** Release the first piece so the rest of the job can run. */
+  function approveFirstOff(state, machineId, approved, note = '') {
+    const permitted = may(state, 'approveFirstOff');
+    if (!permitted.ok) return permitted;
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    if (!machine.active.awaitingFirstOff) return { ok: false, reason: 'No first article is waiting on this machine' };
+
+    const actor = currentActor(state);
+    machine.active.awaitingFirstOff = false;
+    if (approved) {
+      machine.active.firstOffApprovedAt = Date.now();
+      machine.active.firstOffApprovedBy = actor.name;
+      machine.downtime = null;
+      setState(state, machine, 'PRODUCTION', { actor: actor.name, role: actor.role, detail: 'first article approved' });
+      record(state, {
+        machineId, event: 'FIRST_OFF_APPROVED', wo: machine.active.wo,
+        summary: `First article on ${machine.active.wo} approved by ${actor.name}${note.trim() ? ` — ${note.trim()}` : ''}`,
+      });
+      return { ok: true, message: 'First article approved — running' };
+    }
+    machine.active.done = Math.max(0, machine.active.done - 1);
+    machine.active.scrap = (machine.active.scrap ?? 0) + 1;
+    record(state, {
+      machineId, event: 'FIRST_OFF_REJECTED', wo: machine.active.wo,
+      summary: `First article on ${machine.active.wo} rejected by ${actor.name}${note.trim() ? ` — ${note.trim()}` : ''}. `
+        + 'Piece scrapped; the machine stays held until the setup is corrected.',
+    });
+    return { ok: true, message: 'First article rejected — machine stays held' };
+  }
+
   // -------------------------------------------- direct machinist control ---
 
   /**
@@ -2959,6 +3244,8 @@ window.DOWNTIME_REASONS = [
    * are different things.
    */
   function reorderQueue(state, machineId, wo, direction) {
+    const permitted = may(state, 'reorderQueue');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const from = machine.queue.findIndex((q) => q.wo === wo);
@@ -2987,11 +3274,21 @@ window.DOWNTIME_REASONS = [
    * about, so it is recorded rather than glossed over.
    */
   function switchActiveJob(state, machineId, wo) {
+    const permitted = may(state, 'switchActiveJob');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const index = machine.queue.findIndex((q) => q.wo === wo);
     if (index < 0) return { ok: false, reason: `${wo} is not in this queue` };
     if (machine.active.wo === wo) return { ok: false, reason: `${wo} is already running` };
+    // Swapping the job would end the stoppage as a side effect and the reason
+    // would never be recorded. Make it explicit instead.
+    if (A.BLOCKED_STATES.includes(machine.state) && !machine.downtime) {
+      return {
+        ok: false,
+        reason: 'Classify the current stoppage first — switching jobs would close it with no reason recorded',
+      };
+    }
 
     const actor = currentActor(state);
     const before = queueWos(machine);
@@ -3072,7 +3369,15 @@ window.DOWNTIME_REASONS = [
     const now = Date.now();
 
     state.machines.forEach((machine) => {
-      if (machine.collector.online) machine.collector.lastEventAt = now;
+      /*
+       * No collector, no data. When the link is down the platform receives
+       * nothing, so nothing may advance — the last known values simply go
+       * stale and are labelled as such. Continuing to increment counters
+       * during an outage would be inventing production that may not have
+       * happened, which is the single worst thing a visibility layer can do.
+       */
+      if (!machine.collector.online) return;
+      machine.collector.lastEventAt = now;
 
       if (machine.state === 'SETUP') {
         machine.setupRemainingMin = Math.max(0, machine.setupRemainingMin - elapsedSimMin);
@@ -3098,17 +3403,52 @@ window.DOWNTIME_REASONS = [
           machine.telemetry.tool = progress && progress.current ? progress.current.tool : '—';
         }
 
-        if (machine.cycleElapsedMin >= machine.cycleTargetMin) {
+        /*
+         * A poll can span more than one cycle — a 30-second poll on a 12-second
+         * part, or the demo clock at 15 min/s. Counting a single part per poll
+         * silently loses the rest, so every completed cycle in the interval is
+         * counted. This is the same trap in production: derive part count from
+         * cycle events, not from "did it change since I last looked".
+         */
+        while (machine.cycleElapsedMin >= machine.cycleTargetMin) {
           machine.history.cycles.push({
             wo: machine.active.wo,
             program: machine.active.program,
             min: Number(machine.cycleTargetMin.toFixed(2)),
             at: now,
           });
+          /*
+           * A completed cycle is a cycle, not necessarily a good part. The
+           * count of cycles run and the count of good parts are tracked
+           * separately; scrap moves one from good to scrap. D365 wants good
+           * quantity, and conflating the two overstates every job.
+           */
+          machine.active.cyclesRun = (machine.active.cyclesRun ?? machine.active.done) + 1;
           machine.active.done = Math.min(machine.active.qty, machine.active.done + 1);
-          machine.cycleElapsedMin = 0;
-          machine.cycleTargetMin = null;
+          machine.cycleElapsedMin -= machine.cycleTargetMin;
+          machine.cycleTargetMin = sampleCycleTarget(machine);
           if (machine.telemetry) machine.telemetry.block = 1;
+
+          // First piece off a fresh setup goes to inspection before the rest.
+          if (machine.active.firstOffRequired && !machine.active.firstOffApprovedAt) {
+            machine.active.awaitingFirstOff = true;
+            setState(state, machine, 'STOPPED', { detail: 'first piece awaiting inspection' });
+            machine.downtime = {
+              code: 'INSPECTION',
+              label: 'Waiting for inspection',
+              owner: 'Quality',
+              note: `First piece off ${machine.active.wo} — held for first-article approval`,
+              startedAt: now,
+              classifiedAt: now,
+              classifiedBy: 'System',
+            };
+            record(state, {
+              actor: 'System', role: 'System', machineId: machine.id,
+              event: 'FIRST_OFF_HELD', wo: machine.active.wo,
+              summary: 'First piece complete — production held until the first article is approved',
+            });
+            return;
+          }
 
           if (machine.active.done >= machine.active.qty) {
             record(state, {
@@ -3139,6 +3479,7 @@ window.DOWNTIME_REASONS = [
             return;
           }
         }
+        if (machine.cycleTargetMin == null) machine.cycleTargetMin = sampleCycleTarget(machine);
 
         // Occasional unplanned fault, so FAULT handling is demonstrable.
         if (Math.random() < 0.0025) {
@@ -3213,7 +3554,7 @@ window.DOWNTIME_REASONS = [
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      return parsed.version === 2 ? parsed : null;
+      return parsed.version === 3 ? parsed : null;
     } catch (err) {
       return null;
     }
@@ -3249,6 +3590,14 @@ window.DOWNTIME_REASONS = [
     switchActiveJob,
     setMachinistEstimate,
     finaliseProcess,
+    recordScrap,
+    approveFirstOff,
+    signIn,
+    signOut,
+    acknowledgeExpiry,
+    unacknowledgedExpiries,
+    may,
+    PERMISSIONS,
     UNPLANNED_CATEGORIES,
     REMOVAL_REASONS,
     assignmentIssues,
@@ -3425,9 +3774,19 @@ window.DOWNTIME_REASONS = [
         aria-label="Quantity complete"><div class="bar" style="width:${p}%"></div></div>
       <div class="row muted"><span>${esc(machine.active.done)} of ${esc(machine.active.qty)} complete</span>
         <span>${esc(machine.active.qty - machine.active.done)} remaining · ${p}%</span></div>
+      ${/*
+        * Good quantity and cycles run are two different numbers, and the gap
+        * between them is scrap. Counting a completed cycle as a good part is
+        * how a job reports 100% and then ships short. Scrap moves a piece from
+        * good to scrapped rather than deleting it, so the machine time stays
+        * visible in the cycle history that feeds the ETA.
+        */''}
+      ${machine.active.scrap ? `<div class="row muted small"><span class="scrap-count">${esc(machine.active.scrap)}
+        scrapped · ${esc((machine.active.cyclesRun ?? machine.active.done + machine.active.scrap))} cycles run</span></div>` : ''}
+      ${technical ? '<div class="row"><button class="btn" data-act="record-scrap" data-focus-key="record-scrap">Record scrap</button></div>' : ''}
       ${etaBlock(state, machine, now)}
       <div class="row muted small">
-        <span>Due ${esc(dateTime(machine.active.dueAt))}</span>
+        <span>${machine.active.dueAt == null ? 'No committed due date' : `Due ${esc(dateTime(machine.active.dueAt))}`}</span>
         <span>Updated ${esc(ago(machine.collector.lastEventAt, now))}</span>
       </div>
       ${technical ? `<div class="row muted small tech">
@@ -3568,9 +3927,13 @@ window.DOWNTIME_REASONS = [
       <p class="muted small">${p.scope === 'JOB'
         ? 'This posted file runs the whole quantity in one go, so the figures above are for the entire job.'
         : 'This posted file makes one piece and is re-run for each. The figures above are for the piece being cut now.'}</p>
-      ${library ? `<p class="muted small">Stored program <code>${esc(machine.active.program)}</code> —
-        ${esc(library.lifetimeRuns.toLocaleString())} lifetime runs across ${esc(library.jobs)} job${library.jobs === 1 ? '' : 's'}.
-        Cycle history follows the program, so a repeat order does not start from nothing.</p>` : ''}
+      ${library ? `<p class="muted small">Stored program <code>${esc(machine.active.program)}</code> ${esc(library.rev)} —
+        ${esc(library.lifetimeRuns.toLocaleString())} run${library.lifetimeRuns === 1 ? '' : 's'} across
+        ${esc(library.jobs)} job${library.jobs === 1 ? '' : 's'} <strong>shop-wide, all machines</strong>.
+        The estimates above are not drawn from that figure: they use the
+        ${esc(A.relevantCycles(machine).length)} cycle${A.relevantCycles(machine).length === 1 ? '' : 's'} of this program
+        measured on ${esc(machine.name)} itself, because the same program on a different spindle and fixture
+        is a different cycle time.</p>` : ''}
       <p class="muted small">Source: ${esc(machine.active.camSource ?? 'CAM operation list')} ·
         live block number from the ${esc(machine.collector.protocol)} collector. Read-only; nothing is sent to the machine.</p>`;
   }
@@ -3591,7 +3954,14 @@ window.DOWNTIME_REASONS = [
         ? `<span class="unplanned-badge">Unplanned · ${esc(job.unplanned.categoryLabel)} · no work order</span>`
         : '';
 
+      // "Move to top" exists because a nine-deep queue otherwise needs eight
+      // presses to promote the last job, and on a wall terminal that is how a
+      // machinist ends up not reordering at all. It is distinct from "Run this
+      // now", which interrupts the current job rather than queueing next.
       const rowControls = controls ? `<span class="qcontrols">
+        <button class="qbtn" data-queue-move="top" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-top"
+          ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} to the top of the queue"
+          title="Move to the top of the queue">⤒</button>
         <button class="qbtn" data-queue-move="up" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-up"
           ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(job.wo)} up">▲</button>
         <button class="qbtn" data-queue-move="down" data-wo="${esc(job.wo)}" data-focus-key="q-${esc(job.wo)}-down"
@@ -3648,6 +4018,20 @@ window.DOWNTIME_REASONS = [
       ? '<p class="notice warn">Approved but <strong>not yet in effect</strong> — the queue changes when the current job completes.</p>'
       : '';
 
+    // An approval that lapsed says so on the request itself, not only in the
+    // audit trail. Until somebody acknowledges it, it also counts on the
+    // leadership tiles — an approval that silently did nothing is worse than a
+    // rejection, because the requester believes it happened.
+    const expiredNotice = request.status === 'EXPIRED'
+      ? `<p class="notice urgent"><strong>This approval never took effect.</strong>
+          ${esc(request.expiredReason ?? 'The work order was no longer in the queue when the current job finished')}.
+          The queue was not changed. Submit a new request if the move is still needed.
+          ${request.expiryAcknowledged
+            ? '<br><span class="muted small">Acknowledged.</span>'
+            : `<br><button class="btn small" data-ack-expiry="${esc(request.id)}"
+                 data-focus-key="ack-${esc(request.id)}">Acknowledge</button>`}</p>`
+      : '';
+
     return `<article class="request">
       <div class="row">
         <div>
@@ -3659,6 +4043,7 @@ window.DOWNTIME_REASONS = [
       </div>
       ${request.note ? `<blockquote class="note">${esc(request.note)}</blockquote>` : ''}
       ${deferredNotice}
+      ${expiredNotice}
       ${decision}
       ${showControls && request.status === 'PENDING' ? `<div class="request-actions">
         <button class="btn good decision" data-request="${request.id}" data-action="approve" data-focus-key="req-${request.id}-approve">Approve now</button>
@@ -3835,7 +4220,22 @@ window.DOWNTIME_REASONS = [
     if (A.BLOCKED_STATES.includes(machine.state)) controls.push('<button class="btn good" data-act="resume" data-focus-key="resume">Resume machine</button>');
     else controls.push('<button class="btn bad" data-act="stop" data-focus-key="stop">Stop machine</button>');
 
+    /*
+     * First-article hold. The machine stops itself after the first piece on a
+     * job that needs one, and stays stopped until somebody says the piece is
+     * good. This is a hold, not a stoppage to be explained away: it is the one
+     * downtime the shop wants, so it is surfaced as its own decision rather
+     * than left to the generic reason grid.
+     */
+    const firstOff = machine.active.awaitingFirstOff
+      ? `<p class="banner urgent"><strong>First article waiting.</strong> The first piece off
+          ${esc(machine.active.wo)} is complete and production is held until it is measured.
+          <button class="btn good" data-act="first-off-approve" data-focus-key="first-off-approve">Approve — run the rest</button>
+          <button class="btn bad" data-act="first-off-reject" data-focus-key="first-off-reject">Reject — scrap and hold</button></p>`
+      : '';
+
     return `${panelHead(state, machine, 'Machinist controls for this machine only', now, `<div class="head-actions">${controls.join('')}</div>`)}
+      ${firstOff}
       ${needsReason ? `<p class="banner urgent"><strong>Reason needed.</strong> ${esc(machine.name)} has been stopped
         ${Math.round((now - machine.stateSince) / 60000)} min with no cause recorded. It stays flagged here, on the machine
         button and on the leadership board until someone answers.
@@ -3890,7 +4290,7 @@ window.DOWNTIME_REASONS = [
       <div class="stats four">
         <div class="stat"><div class="label">State</div><div class="value">${esc(machine.state)}</div></div>
         <div class="stat"><div class="label">Advisory completion</div><div class="value small-value">${esc(A.formatRange(eta))}</div></div>
-        <div class="stat"><div class="label">Due-date risk</div><div class="value small-value ${esc(risk.level.toLowerCase())}-risk">${esc(risk.level)}</div></div>
+        <div class="stat"><div class="label">Due-date risk</div><div class="value small-value ${esc(risk.level.toLowerCase())}-risk">${esc(risk.level === 'NONE' ? 'N/A' : risk.level)}</div></div>
         <div class="stat"><div class="label">Open blockers</div><div class="value">${blockers.length}</div></div>
       </div>
       <div class="content">
@@ -3908,6 +4308,7 @@ window.DOWNTIME_REASONS = [
     const stopped = state.machines.filter((m) => A.BLOCKED_STATES.includes(m.state)).length;
     const pending = state.requests.filter((r) => r.status === 'PENDING').length;
     const deferred = state.requests.filter((r) => r.status === 'APPROVED_AFTER_CURRENT').length;
+    const lapsed = S.unacknowledgedExpiries(state).length;
     const unclassified = state.machines.filter((m) => S.needsDowntimeReason(state, m)).length;
     const blockers = state.blockers.filter((b) => b.status !== 'CLOSED').length;
     const atRisk = state.machines.filter((m) => A.dueDateRisk(state, m, now).level === 'HIGH').length;
@@ -3922,6 +4323,7 @@ window.DOWNTIME_REASONS = [
       { label: 'Open blockers', value: blockers, kind: blockers ? 'warn' : '' },
       { label: 'Jobs at due-date risk', value: atRisk, kind: atRisk ? 'bad' : '' },
       { label: 'Unclassified stoppages', value: unclassified, kind: unclassified ? 'bad' : '' },
+      { label: 'Approvals that lapsed', value: lapsed, kind: lapsed ? 'bad' : '' },
       { label: 'Jobs queued', value: state.machines.reduce((a, m) => a + m.queue.length, 0) },
       { label: 'Unplanned work, no order', value: unplannedCount, kind: unplannedCount ? 'warn' : '' },
       { label: 'Released, not yet on a machine', value: state.unassignedOrders.length },
@@ -4038,6 +4440,57 @@ window.DOWNTIME_REASONS = [
     if (target) target.focus({ preventScroll: true });
   }
 
+  const ROLE_OF = { Machinist: 'machinist', 'Engineer / PM': 'engineer', Leadership: 'leadership' };
+
+  /**
+   * Who is at the terminal.
+   *
+   * This is a picker rather than a label because a wall terminal is shared —
+   * several machinists across a shift, plus engineering looking over a
+   * shoulder — and the audit trail is only worth having if it names the person
+   * who actually pressed the button. Signing in and out is itself audited, and
+   * signing out leaves the terminal unable to act: every state function goes
+   * through a permission check that requires somebody to be signed in.
+   *
+   * The role tabs and this picker are two views of the same fact. Choosing a
+   * person switches to their role; choosing a role signs in that role's default
+   * person. They cannot disagree, because a screen that says "Engineer" while
+   * attributing decisions to a machinist is exactly the failure this whole
+   * application exists to prevent.
+   */
+  function renderIdentity() {
+    const select = $('actorSelect');
+    const signedIn = state.signedIn;
+    const options = state.people
+      .map((p) => `<option value="${V.esc(p.name)}"${signedIn && p.name === signedIn.name ? ' selected' : ''}>${V.esc(p.name)} — ${V.esc(p.role)}</option>`)
+      .join('');
+    select.innerHTML = `<option value=""${signedIn ? '' : ' selected'}>Nobody — terminal locked</option>${options}`;
+    $('actorName').textContent = signedIn
+      ? signedIn.title
+      : 'Terminal locked — sign in to record a decision';
+    $('signOutButton').disabled = !signedIn;
+  }
+
+  /**
+   * Switching role tab signs in that role's default person, so the identity and
+   * the view can never disagree. Nothing happens if the person already signed
+   * in holds the role — a second machinist should not be handed the terminal
+   * just because somebody re-pressed the tab they were already on.
+   */
+  function setRole(role) {
+    if (state.signedIn && ROLE_OF[state.signedIn.role] === role) {
+      state.role = role;
+      S.save(state);
+      render();
+      return;
+    }
+    const person = state.people.find((p) => ROLE_OF[p.role] === role);
+    if (!person) return;
+    const result = S.signIn(state, person.name);
+    state.role = role;
+    commit(result, result.ok ? `Signed in as ${person.name} (${person.role})` : undefined);
+  }
+
   function render() {
     const now = Date.now();
     window.MT_STATE_LIBRARY = state.programLibrary;
@@ -4050,7 +4503,7 @@ window.DOWNTIME_REASONS = [
     $('help').textContent = copy.help;
     $('chooseTitle').textContent = copy.choose;
     $('chooseHelp').textContent = copy.chooseHelp;
-    $('actorName').textContent = `${S.currentActor(state).name} — ${S.currentActor(state).title}`;
+    renderIdentity();
 
     ROLES.forEach((role) => {
       const tab = document.querySelector(`[data-role="${role}"]`);
@@ -4447,13 +4900,29 @@ window.DOWNTIME_REASONS = [
     const reason = S.reasonByCode(code);
     let note = '';
     if (reason.noteRequired) {
+      /*
+       * The note prompt is a continuation of the stoppage prompt, not a second
+       * decision on top of it. Stacking two modals gave a doubled backdrop and
+       * an ambiguous Escape — one press dismissed the note and left the
+       * stoppage dialog behind it. So the stoppage prompt steps aside, and if
+       * the note is abandoned it comes straight back with the reason grid
+       * intact. No deferral is recorded: the machinist never left the task.
+       */
+      const wasOpen = $('downtimeDialog').open;
+      if (wasOpen) $('downtimeDialog').close();
       const answer = await ask({
         title: reason.label,
         description: `${reason.definition}. This reason routes to ${reason.owner} and needs a short note.`,
         fields: [{ type: 'textarea', name: 'note', label: 'What is holding it up?', placeholder: 'One line is enough' }],
         confirmLabel: 'Save reason',
       });
-      if (!answer) return;
+      if (!answer) {
+        if (wasOpen) {
+          renderDowntimeDialog(S.selectedMachine(state));
+          $('downtimeDialog').showModal();
+        }
+        return;
+      }
       note = answer.note ?? '';
     }
     const result = S.classifyDowntime(state, state.selected, code, note);
@@ -4463,6 +4932,46 @@ window.DOWNTIME_REASONS = [
     }
     if ($('downtimeDialog').open) $('downtimeDialog').close();
     commit(result, `Recorded as ${reason.label} — ${reason.owner} notified`);
+  }
+
+  async function handleRecordScrap() {
+    const machine = S.selectedMachine(state);
+    if (!machine.active.done) { toast('No good pieces recorded yet on this job', 'bad'); return; }
+    const answer = await ask({
+      title: `Record scrap on ${machine.active.wo}`,
+      description: `${machine.active.done} good of ${machine.active.qty}. Scrapping moves pieces out of the good `
+        + 'count; the machine time stays in the cycle history, so the estimate does not pretend the work never happened.',
+      fields: [
+        {
+          type: 'select',
+          name: 'count',
+          label: 'How many pieces?',
+          options: Array.from({ length: Math.min(10, machine.active.done) }, (_, i) => ({
+            value: String(i + 1), label: `${i + 1} piece${i === 0 ? '' : 's'}`,
+          })),
+        },
+        { type: 'textarea', name: 'note', label: 'What went wrong? (optional)', placeholder: 'One line is enough' },
+      ],
+      confirmLabel: 'Record scrap',
+      danger: true,
+    });
+    if (!answer) return;
+    commit(S.recordScrap(state, machine.id, Number(answer.count), answer.note ?? ''));
+  }
+
+  async function handleFirstOff(approved) {
+    const machine = S.selectedMachine(state);
+    const answer = await ask({
+      title: approved ? 'Approve the first article?' : 'Reject the first article?',
+      description: approved
+        ? `The first piece off ${machine.active.wo} is good and the rest of the job may run.`
+        : `The first piece off ${machine.active.wo} is scrapped and the machine stays held until the setup is corrected.`,
+      fields: [{ type: 'textarea', name: 'note', label: 'Note (optional)', placeholder: 'Measurements, what was adjusted' }],
+      confirmLabel: approved ? 'Approve and run' : 'Reject and hold',
+      danger: !approved,
+    });
+    if (!answer) return;
+    commit(S.approveFirstOff(state, machine.id, approved, answer.note ?? ''));
   }
 
   async function handleReset() {
@@ -4545,15 +5054,25 @@ window.DOWNTIME_REASONS = [
     if (event.key === 'End') next = ROLES[ROLES.length - 1];
     if (!next) return;
     event.preventDefault();
-    state.role = next;
-    render();
+    setRole(next);
     document.querySelector(`[data-role="${next}"]`).focus();
   }
 
   function bind() {
     document.querySelectorAll('[data-role]').forEach((tab) => {
-      tab.addEventListener('click', () => { state.role = tab.dataset.role; S.save(state); render(); });
+      tab.addEventListener('click', () => setRole(tab.dataset.role));
       tab.addEventListener('keydown', onTabKeydown);
+    });
+
+    $('actorSelect').addEventListener('change', (event) => {
+      const name = event.target.value;
+      if (!name) { commit(S.signOut(state)); return; }
+      const result = S.signIn(state, name);
+      if (result.ok) state.role = ROLE_OF[state.people.find((p) => p.name === name).role] ?? state.role;
+      commit(result);
+    });
+    $('signOutButton').addEventListener('click', () => {
+      commit(S.signOut(state), 'Signed out — the terminal cannot record a decision until somebody signs in');
     });
 
     $('machines').addEventListener('click', (event) => {
@@ -4585,6 +5104,9 @@ window.DOWNTIME_REASONS = [
       const runNow = event.target.closest('[data-queue-run]');
       if (runNow) { handleRunNow(runNow.dataset.queueRun); return; }
 
+      const ack = event.target.closest('[data-ack-expiry]');
+      if (ack) { commit(S.acknowledgeExpiry(state, Number(ack.dataset.ackExpiry))); return; }
+
       const jump = event.target.closest('[data-select-machine]');
       if (jump) { state.selected = jump.dataset.selectMachine; S.save(state); render(); maybeRaiseDowntimeDialog(); return; }
 
@@ -4599,6 +5121,9 @@ window.DOWNTIME_REASONS = [
         case 'request': openRequestDialog(id); break;
         case 'add-job': openAddJobDialog(); break;
         case 'set-estimate': handleSetEstimate(); break;
+        case 'record-scrap': handleRecordScrap(); break;
+        case 'first-off-approve': handleFirstOff(true); break;
+        case 'first-off-reject': handleFirstOff(false); break;
         case 'finalise-process': commit(S.finaliseProcess(state, id)); break;
         case 'open-downtime': {
           const machine = S.selectedMachine(state);
@@ -4643,6 +5168,23 @@ window.DOWNTIME_REASONS = [
     $('downtimeSnooze').addEventListener('click', () => {
       $('downtimeDialog').close();
       commit(S.snoozeDowntimePrompt(state, state.selected, 60));
+    });
+    /*
+     * Escape is a deferral, not a silent escape hatch.
+     *
+     * A native dialog fires `cancel` only on Escape — every button in the
+     * dialog calls close() directly — so this handler is precisely the
+     * "dismissed without answering" path. It used to close the prompt with no
+     * record and no snooze, which meant the prompt reopened on the next tick
+     * (unusable) and the dismissal never reached the audit trail. It now takes
+     * the same route as the explicit defer button: audited, still flagged
+     * unclassified, back in 60 seconds.
+     */
+    $('downtimeDialog').addEventListener('cancel', (event) => {
+      event.preventDefault();
+      $('downtimeDialog').close();
+      commit(S.snoozeDowntimePrompt(state, state.selected, 60),
+        'Deferred — the stoppage stays unclassified and the prompt returns in 60s');
     });
 
     $('simToggle').addEventListener('click', () => {

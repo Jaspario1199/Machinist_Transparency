@@ -1319,13 +1319,20 @@ test('cycle history follows the program, so a repeat order does not start cold',
   assert.ok(result.count >= 30, `expected the program's cycles, got ${result.count}`);
 });
 
-test('the stored program library is surfaced with its lifetime run count', async () => {
+test('the stored program library separates shop-wide history from this machine', async () => {
   const page = await open();
   await openSections(page);
   const body = await page.textContent('#panel');
   assert.match(body, /Stored program/);
-  assert.match(body, /412 lifetime runs across 6 jobs/);
-  assert.match(body, /repeat order does not start from nothing/);
+  assert.match(body, /412 runs across\s+6 jobs/);
+
+  // The lifetime figure is shop-wide; the estimate is not drawn from it. Saying
+  // "412 runs" next to an estimate built from a handful of local cycles reads
+  // as though 412 runs of evidence sit behind the number. They do not — cycles
+  // are scoped to this machine — and the screen has to say so.
+  assert.match(body, /shop-wide, all machines/i);
+  assert.match(body, /not drawn from that figure/i);
+  assert.match(body, /measured on CNC Mill 1 itself/);
 });
 
 // -------------------------------------------------------------- theming ---
@@ -1392,4 +1399,194 @@ test('the theme never links an external font or stylesheet', async () => {
     const remote = content.match(/@import[^;]*https?:|url\(\s*['"]?https?:/g) ?? [];
     assert.deepEqual(remote, [], `${file} must not reach the network — it has to run from a USB stick`);
   }
+});
+
+// ------------------------------------------------ audit findings, fixed ---
+//
+// Each test below pins a hole found in the second deep-dive review. They are
+// grouped here rather than scattered so that a regression is obvious: if one
+// of these fails, the screen has started asserting something it cannot back.
+
+test('nobody signed in means the terminal cannot record a decision', async () => {
+  const page = await open();
+  await page.click('#signOutButton');
+
+  const result = await page.evaluate(() => window.MT_STATE.stopMachine(window.MT_DEBUG.getState(), 'cnc-1'));
+  assert.equal(result.ok, false, 'an unattended terminal must not be able to act');
+  assert.match(result.reason, /signed in/i);
+
+  const state = await getState(page);
+  assert.equal(state.signedIn, null);
+  assert.ok(state.audit.some((a) => a.event === 'SIGNED_OUT'), 'signing out is itself audited');
+});
+
+test('a role may only do what that role is allowed to do', async () => {
+  const page = await open();
+  const denied = await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    window.MT_STATE.signIn(s, 'T. Okafor');
+    return {
+      reorder: window.MT_STATE.reorderQueue(s, 'cnc-1', s.machines[0].queue[1].wo, 'up'),
+      classify: window.MT_STATE.classifyDowntime(s, 'cnc-3', 'TOOLING', 'x'),
+      request: window.MT_STATE.submitRequest(s, {
+        machineId: 'cnc-1', wo: s.machines[0].queue[0].wo, toPos: 1,
+        urgency: 'NORMAL', timing: 'AFTER_JOB', reason: 'Customer shipment risk', note: '',
+      }),
+    };
+  });
+  assert.equal(denied.reorder.ok, false, 'an engineer must not reorder the executable queue');
+  assert.equal(denied.classify.ok, false, 'an engineer must not classify somebody else’s stoppage');
+  assert.equal(denied.request.ok, true, 'an engineer must still be able to ask');
+});
+
+test('switching role tab switches the identity, so the audit never misattributes', async () => {
+  const page = await open();
+  await page.click('[data-role="engineer"]');
+  const state = await getState(page);
+  assert.equal(state.signedIn.role, 'Engineer / PM',
+    'the tab and the signed-in person must agree — a screen saying "Engineer" while attributing to a machinist is the exact failure this app exists to prevent');
+  assert.ok(state.audit.some((a) => a.event === 'SHIFT_HANDOVER' || a.event === 'SIGNED_IN'));
+});
+
+test('unplanned work has no committed date, so it is never reported at due-date risk', async () => {
+  const page = await open();
+  const risk = await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[0];
+    m.active.dueAt = null;
+    m.active.unplanned = { categoryLabel: 'Rework', authorizedBy: 'P. Osei', openedAt: Date.now() };
+    return window.MT_ANALYTICS.dueDateRisk(s, m, Date.now());
+  });
+  assert.equal(risk.level, 'NONE');
+  assert.match(risk.text, /no committed date/i);
+});
+
+test('unplanned work is added without a fabricated due date', async () => {
+  const page = await open();
+  const job = await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    window.MT_STATE.addUnplannedJob(s, 'cnc-1', {
+      category: 'REWORK', description: 'Re-cut bore on 6 rejected housings',
+      estimateMin: 45, authorizedBy: 'P. Osei', position: 1,
+    });
+    return s.machines[0].queue.find((q) => q.source === 'UNPLANNED');
+  });
+  assert.ok(job, 'the unplanned job must reach the queue');
+  assert.equal(job.dueAt, null,
+    'inventing a due date from the estimate makes every overrun read as a missed commitment');
+});
+
+test('escaping the stoppage prompt records the deferral instead of dropping it', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await page.waitForFunction(() => document.getElementById('downtimeDialog').open);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('downtimeDialog').open);
+
+  const state = await getState(page);
+  assert.ok(state.audit.some((a) => a.event === 'DOWNTIME_PROMPT_DEFERRED'),
+    'a dismissal that leaves no trace is a dismissal nobody can see');
+  const machine = state.machines.find((m) => m.id === 'cnc-3');
+  assert.ok(machine.promptSnoozedUntil > Date.now(), 'Escape must snooze, or the prompt reopens instantly');
+  assert.equal(machine.downtime, null, 'the stoppage stays unclassified');
+});
+
+test('a note-required reason never stacks two modals', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await page.waitForFunction(() => document.getElementById('downtimeDialog').open);
+  await page.click('#downtimeReasons [data-reason="TOOLING"]');
+  await page.waitForFunction(() => document.getElementById('promptDialog').open);
+
+  assert.equal(await page.evaluate(() => document.getElementById('downtimeDialog').open), false,
+    'the stoppage prompt must step aside rather than sit behind the note prompt');
+
+  // Abandoning the note brings the reason grid back rather than losing it.
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.getElementById('downtimeDialog').open);
+});
+
+test('a queued job can be promoted to the top in one press', async () => {
+  const page = await open();
+  await openSections(page);
+  const last = await page.evaluate(() => window.MT_DEBUG.getState().machines[0].queue.at(-1).wo);
+  await page.click(`[data-queue-move="top"][data-wo="${last}"]`);
+  const state = await getState(page);
+  assert.equal(state.machines[0].queue[0].wo, last,
+    'a nine-deep queue must not need eight presses to promote the last job');
+  assert.ok(state.audit.some((a) => a.event === 'QUEUE_REORDERED'));
+});
+
+test('a deferred approval that lapses says so on the request, not only in the audit', async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const s = window.MT_DEBUG.getState();
+    const m = s.machines[0];
+    const wo = m.queue[1].wo;
+    window.MT_STATE.signIn(s, 'T. Okafor');
+    window.MT_STATE.submitRequest(s, {
+      machineId: m.id, wo, toPos: 1, urgency: 'HIGH', timing: 'AFTER_JOB',
+      reason: 'Customer shipment risk', note: '',
+    });
+    window.MT_STATE.signIn(s, 'R. Delgado');
+    const req = s.requests.at(-1);
+    window.MT_STATE.decideRequest(s, req.id, 'defer');
+    // The work order leaves the queue before the current job finishes.
+    window.MT_STATE.removeFromQueue(s, m.id, wo, 'Material unavailable');
+    m.active.done = m.active.qty - 1;
+    window.MT_DEBUG.tick(120);
+  });
+
+  const state = await getState(page);
+  const expired = state.requests.find((r) => r.status === 'EXPIRED');
+  assert.ok(expired, 'the approval must lapse rather than silently succeed');
+  assert.equal(expired.expiryAcknowledged, false);
+  assert.equal(await page.evaluate(() => window.MT_STATE.unacknowledgedExpiries(window.MT_DEBUG.getState()).length), 1);
+
+  await page.evaluate(() => { document.querySelectorAll('#panel details').forEach((d) => { d.open = true; }); });
+  const panel = await page.textContent('#panel');
+  assert.match(panel, /This approval never took effect/i,
+    'the requester was told "approved"; they have to be told it did not happen');
+
+  await page.click('[data-ack-expiry]');
+  const after = await getState(page);
+  assert.equal(after.requests.find((r) => r.id === expired.id).expiryAcknowledged, true);
+  assert.ok(after.audit.some((a) => a.event === 'REQUEST_EXPIRY_ACKNOWLEDGED'));
+});
+
+test('scrap moves a piece out of the good count instead of vanishing', async () => {
+  const page = await open();
+  const before = await page.evaluate(() => window.MT_DEBUG.getState().machines[0].active.done);
+  const result = await page.evaluate(() => window.MT_STATE.recordScrap(window.MT_DEBUG.getState(), 'cnc-1', 2, 'bore oversize'));
+  assert.equal(result.ok, true);
+
+  const state = await getState(page);
+  const active = state.machines[0].active;
+  assert.equal(active.done, before - 2, 'good quantity is what D365 needs, and it must drop');
+  assert.equal(active.scrap, 2);
+  assert.ok(state.audit.some((a) => a.event === 'SCRAP_RECORDED'));
+
+  const over = await page.evaluate(() => window.MT_STATE.recordScrap(window.MT_DEBUG.getState(), 'cnc-1', 9999));
+  assert.equal(over.ok, false, 'you cannot scrap more than has been made');
+});
+
+/*
+ * The audit listed "Reset can stack a second modal on top of the stoppage
+ * prompt" as a hole. Reproducing it showed the opposite: every dialog in the
+ * application uses showModal(), which makes the rest of the document inert, so
+ * the destructive control is unreachable while a decision is open. The finding
+ * was wrong. This test pins the property that makes it wrong, so a future
+ * change from showModal() to show() fails here rather than in a shop.
+ */
+test('a destructive control cannot be reached while a decision dialog is open', async () => {
+  const page = await open();
+  await page.click('.machine[data-machine="cnc-3"]');
+  await page.waitForFunction(() => document.getElementById('downtimeDialog').open);
+
+  const reachable = await page.evaluate(() => {
+    const reset = document.getElementById('resetButton');
+    const r = reset.getBoundingClientRect();
+    return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === reset;
+  });
+  assert.equal(reachable, false, 'Reset must be inert behind the modal, not clickable through it');
 });

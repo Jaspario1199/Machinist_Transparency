@@ -12,7 +12,7 @@
 (function () {
   const A = window.MT_ANALYTICS;
   const MIN = 60 * 1000;
-  const STORAGE_KEY = 'mt-demo-state-v2';
+  const STORAGE_KEY = 'mt-demo-state-v3';
 
   const REJECTION_REASONS = [
     'Material unavailable',
@@ -31,6 +31,32 @@
     SCHEDULED: 'At a specific later point',
   };
 
+  /**
+   * Who may do what, enforced HERE rather than by which buttons get rendered.
+   * Hiding a control is a courtesy; refusing the operation is the rule.
+   */
+  const PERMISSIONS = {
+    Machinist: [
+      'decideRequest', 'reorderQueue', 'switchActiveJob', 'classifyDowntime',
+      'completeSetup', 'startNextJob', 'stopMachine', 'resumeMachine',
+      'addOrderToQueue', 'addUnplannedJob', 'removeFromQueue', 'updateBlocker',
+      'recordScrap', 'setMachinistEstimate', 'finaliseProcess', 'approveFirstOff',
+      'submitRequest',
+    ],
+    'Engineer / PM': ['submitRequest', 'updateBlocker'],
+    Leadership: ['submitRequest'],
+  };
+
+  function may(state, action) {
+    const person = state.signedIn;
+    if (!person) return { ok: false, reason: 'Nobody is signed in at this terminal' };
+    const allowed = PERMISSIONS[person.role] ?? [];
+    if (!allowed.includes(action)) {
+      return { ok: false, reason: `${person.role} may not ${action.replace(/([A-Z])/g, ' $1').toLowerCase().trim()}` };
+    }
+    return { ok: true };
+  }
+
   const ALARM_CODES = ['ALM 402 spindle load', 'ALM 118 tool life expired', 'ALM 231 low coolant', 'ALM 507 door interlock'];
 
   function clone(value) {
@@ -43,11 +69,15 @@
     const seed = window.MT_SEED(now);
 
     const state = {
-      version: 2,
+      version: 3,
       role: 'machinist',
       selected: 'cnc-1',
       shiftStart: seed.shiftStart,
       actors: seed.actors,
+      people: seed.people,
+      // Who is physically at this terminal. Every audit row names this person,
+      // not the role — a shared wall terminal sees several people per shift.
+      signedIn: seed.people.find((x) => x.role === 'Machinist'),
       machines: seed.machines,
       unassignedOrders: seed.unassignedOrders,
       programLibrary: seed.programLibrary,
@@ -110,7 +140,41 @@
   }
 
   function currentActor(state) {
-    return state.actors[state.role];
+    return state.signedIn ?? { name: 'Not signed in', role: 'Unknown', title: '' };
+  }
+
+  /**
+   * Shift handover. Signing in and out is itself audited, because an audit
+   * trail that cannot say who was at the terminal is not an audit trail.
+   */
+  function signIn(state, name) {
+    const person = state.people.find((x) => x.name === name);
+    if (!person) return { ok: false, reason: 'Unknown person' };
+    const previous = state.signedIn;
+    state.signedIn = person;
+    state.role = { Machinist: 'machinist', 'Engineer / PM': 'engineer', Leadership: 'leadership' }[person.role] ?? state.role;
+    record(state, {
+      actor: person.name,
+      role: person.role,
+      event: previous ? 'SHIFT_HANDOVER' : 'SIGNED_IN',
+      summary: previous
+        ? `${person.name} (${person.role}) took over the terminal from ${previous.name}`
+        : `${person.name} (${person.role}) signed in`,
+    });
+    return { ok: true, message: `Signed in as ${person.name}` };
+  }
+
+  function signOut(state) {
+    const previous = state.signedIn;
+    if (!previous) return { ok: false, reason: 'Nobody is signed in' };
+    record(state, {
+      actor: previous.name,
+      role: previous.role,
+      event: 'SIGNED_OUT',
+      summary: `${previous.name} signed out of the terminal`,
+    });
+    state.signedIn = null;
+    return { ok: true, message: 'Signed out' };
   }
 
   /** Builds an active-job record from a queue entry, preserving partial progress. */
@@ -188,6 +252,8 @@
   }
 
   function submitRequest(state, input) {
+    const permitted = may(state, 'submitRequest');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, input.machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (!machine.queue.length) {
@@ -195,6 +261,15 @@
     }
     const job = machine.queue.find((q) => q.wo === input.wo);
     if (!job) return { ok: false, reason: `${input.wo} is not in ${machine.name}'s queue` };
+    const already = state.requests.find((r) => r.machineId === machine.id && r.wo === input.wo
+      && (r.status === 'PENDING' || r.status === 'APPROVED_AFTER_CURRENT'));
+    if (already) {
+      return {
+        ok: false,
+        reason: `There is already an undecided request to move ${input.wo} (from ${already.requestedBy.name}). `
+          + 'Chasing it with a second one does not make it happen faster.',
+      };
+    }
 
     const actor = currentActor(state);
     const before = queueWos(machine);
@@ -237,6 +312,8 @@
    * action: 'approve' | 'reject' | 'defer' | 'counter'
    */
   function decideRequest(state, requestId, action, options = {}) {
+    const permitted = may(state, 'decideRequest');
+    if (!permitted.ok) return permitted;
     const request = state.requests.find((r) => r.id === requestId);
     if (!request) return { ok: false, reason: 'Request not found' };
     if (request.status !== 'PENDING') {
@@ -313,6 +390,34 @@
     return { ok: true, message: action === 'counter' ? `Approved at position ${targetPos}` : 'Request approved' };
   }
 
+  /**
+   * Clears the unacknowledged flag on a lapsed approval.
+   *
+   * Anyone may do this — the point is that a human has seen it, not that a
+   * particular role has. It does not change the queue and does not revive the
+   * request; the requester has to submit a new one if they still want the move.
+   */
+  function acknowledgeExpiry(state, requestId) {
+    const request = state.requests.find((r) => r.id === requestId);
+    if (!request) return { ok: false, reason: 'Unknown request' };
+    if (request.status !== 'EXPIRED') return { ok: false, reason: 'That request did not lapse' };
+    if (request.expiryAcknowledged) return { ok: false, reason: 'Already acknowledged' };
+    request.expiryAcknowledged = true;
+    record(state, {
+      machineId: request.machineId,
+      event: 'REQUEST_EXPIRY_ACKNOWLEDGED',
+      wo: request.wo,
+      summary: `Lapsed approval for ${request.wo} acknowledged. A new request is needed if the move is still wanted.`,
+    });
+    return { ok: true, message: 'Acknowledged — submit a new request if the move is still needed' };
+  }
+
+  /** Lapsed approvals nobody has looked at yet. */
+  function unacknowledgedExpiries(state, machineId) {
+    return state.requests.filter((r) => r.status === 'EXPIRED' && !r.expiryAcknowledged
+      && (!machineId || r.machineId === machineId));
+  }
+
   /** Applies deferred approvals once the active job finishes. */
   function applyDeferredRequests(state, machine) {
     state.requests
@@ -334,14 +439,30 @@
             after: queueWos(machine),
           });
         } else {
+          /*
+           * The approval lapsed — the work order left the queue before the
+           * current job finished, so there is nothing left to move.
+           *
+           * This used to be recorded in the audit trail and nowhere else,
+           * which meant the person who asked for the change was told
+           * "approved" and never told it had not happened. They would only
+           * find out by reading an audit row they have no reason to open. The
+           * lapse now carries its own reason and an unacknowledged flag, so it
+           * is shown on the request itself and counted for leadership until
+           * somebody clears it.
+           */
           r.status = 'EXPIRED';
+          r.expiredAt = Date.now();
+          r.expiredReason = result.reason;
+          r.expiryAcknowledged = false;
           record(state, {
             actor: 'System',
             role: 'System',
             machineId: machine.id,
             event: 'REQUEST_EXPIRED',
             wo: r.wo,
-            summary: `Deferred approval could not be applied — ${result.reason}`,
+            summary: `Deferred approval could not be applied — ${result.reason}. `
+              + `${r.requestedBy.name} (${r.requestedBy.role}) asked for this and it did not happen.`,
             before,
             after: before,
           });
@@ -361,6 +482,8 @@
    * group defined in the same file.
    */
   function classifyDowntime(state, machineId, code, note = '') {
+    const permitted = may(state, 'classifyDowntime');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     const reason = reasonByCode(code);
     if (!machine || !reason) return { ok: false, reason: 'Unknown machine or reason code' };
@@ -419,8 +542,16 @@
   }
 
   function updateBlocker(state, blockerId, status) {
+    const permitted = may(state, 'updateBlocker');
+    if (!permitted.ok) return permitted;
     const blocker = state.blockers.find((b) => b.id === blockerId);
     if (!blocker) return { ok: false, reason: 'Blocker not found' };
+    if (blocker.status === 'CLOSED') {
+      return { ok: false, reason: `That blocker was already closed at ${new Date(blocker.closedAt).toLocaleTimeString()}` };
+    }
+    if (blocker.status === status) {
+      return { ok: false, reason: `That blocker is already ${status.toLowerCase()}` };
+    }
     const actor = currentActor(state);
     blocker.status = status;
     if (status === 'ACKNOWLEDGED') blocker.ackAt = Date.now();
@@ -487,6 +618,8 @@
 
   /** Machinist confirms setup is finished and the job can run. */
   function completeSetup(state, machineId) {
+    const permitted = may(state, 'completeSetup');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (machine.state !== 'SETUP') return { ok: false, reason: `${machine.name} is not in setup` };
@@ -507,6 +640,8 @@
 
   /** Pull the next queued job onto a machine that has run out of work. */
   function startNextJob(state, machineId) {
+    const permitted = may(state, 'startNextJob');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (!machine.queue.length) return { ok: false, reason: `${machine.name} has no queued work` };
@@ -529,6 +664,8 @@
   }
 
   function stopMachine(state, machineId) {
+    const permitted = may(state, 'stopMachine');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (A.BLOCKED_STATES.includes(machine.state)) return { ok: false, reason: 'Already stopped' };
@@ -539,6 +676,8 @@
   }
 
   function resumeMachine(state, machineId) {
+    const permitted = may(state, 'resumeMachine');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (!A.BLOCKED_STATES.includes(machine.state)) return { ok: false, reason: 'Machine is not stopped' };
@@ -609,6 +748,8 @@
    * docs/03 — quantity, due date, revision and priority remain D365's.
    */
   function addOrderToQueue(state, machineId, wo, position, acknowledged = false) {
+    const permitted = may(state, 'addOrderToQueue');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const index = state.unassignedOrders.findIndex((o) => o.wo === wo);
@@ -665,6 +806,8 @@
    * reported separately so the total is visible rather than buried.
    */
   function addUnplannedJob(state, machineId, input) {
+    const permitted = may(state, 'addUnplannedJob');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const category = UNPLANNED_CATEGORIES.find((c) => c.code === input.category);
@@ -691,7 +834,10 @@
       setupMin: 5,
       program: '—',
       requestedPriority: 3,
-      dueAt: Date.now() + estimateMin * MIN,
+      // Deliberately null. Unplanned work has no production order, so it has no
+      // committed date — fabricating one from the estimate would make every
+      // piece of rework read as a due-date breach the moment it overran.
+      dueAt: null,
       source: 'UNPLANNED',
       unplanned: {
         category: category.code,
@@ -718,6 +864,8 @@
 
   /** Takes a job off a queue. D365 orders go back to the unassigned pool. */
   function removeFromQueue(state, machineId, wo, reason) {
+    const permitted = may(state, 'removeFromQueue');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const index = machine.queue.findIndex((q) => q.wo === wo);
@@ -733,6 +881,9 @@
         part: job.part,
         rev: job.rev ?? 'Rev —',
         qty: job.qty,
+        // Carry the finished quantity with it. Dropping this loses real parts.
+        done: job.done ?? 0,
+        scrap: job.scrap ?? 0,
         cycleMedianMin: job.cycleMedianMin,
         cycleSigmaMin: job.cycleSigmaMin,
         setupMin: job.setupMin,
@@ -745,6 +896,21 @@
         inspectionHold: job.readyCode === 'INSPECTION',
       });
     }
+
+    state.blockers
+      .filter((b) => b.machineId === machineId && b.wo === wo && b.status !== 'CLOSED')
+      .forEach((b) => {
+        b.status = 'CLOSED';
+        b.closedAt = Date.now();
+        record(state, {
+          actor: 'System',
+          role: 'System',
+          machineId,
+          event: 'BLOCKER_CLOSED',
+          wo,
+          summary: `Closed the ${b.label} blocker automatically — ${wo} is no longer on this machine`,
+        });
+      });
 
     record(state, {
       machineId,
@@ -781,6 +947,8 @@
    * it appears. Revisions are audited so the estimate has a history.
    */
   function setMachinistEstimate(state, machineId, minutes, note = '') {
+    const permitted = may(state, 'setMachinistEstimate');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const value = Number(minutes);
@@ -808,6 +976,8 @@
 
   /** Promote a settled prototype to a finalised, tracked program. */
   function finaliseProcess(state, machineId) {
+    const permitted = may(state, 'finaliseProcess');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     if (machine.active.programMode !== 'PROTOTYPE') return { ok: false, reason: 'This is not a prototype' };
@@ -825,6 +995,65 @@
     return { ok: true, message: 'Process marked finalised' };
   }
 
+
+  /**
+   * Record scrap. A completed cycle is a cycle; it is only a good part if it
+   * passes. Good quantity is what D365 needs, so the two are counted apart and
+   * scrap moves one from good to scrap rather than vanishing.
+   */
+  function recordScrap(state, machineId, count, note = '') {
+    const permitted = may(state, 'recordScrap');
+    if (!permitted.ok) return permitted;
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    const n = Math.floor(Number(count));
+    if (!Number.isFinite(n) || n < 1) return { ok: false, reason: 'How many pieces?' };
+    if (n > machine.active.done) {
+      return { ok: false, reason: `Only ${machine.active.done} good piece${machine.active.done === 1 ? '' : 's'} recorded so far` };
+    }
+    machine.active.done -= n;
+    machine.active.scrap = (machine.active.scrap ?? 0) + n;
+    record(state, {
+      machineId,
+      event: 'SCRAP_RECORDED',
+      wo: machine.active.wo,
+      summary: `${n} piece${n === 1 ? '' : 's'} scrapped on ${machine.active.wo}`
+        + `${note.trim() ? ` — ${note.trim()}` : ''}. Good quantity now ${machine.active.done} of ${machine.active.qty}.`,
+    });
+    return { ok: true, message: `${n} scrapped — good quantity now ${machine.active.done}` };
+  }
+
+  /** Release the first piece so the rest of the job can run. */
+  function approveFirstOff(state, machineId, approved, note = '') {
+    const permitted = may(state, 'approveFirstOff');
+    if (!permitted.ok) return permitted;
+    const machine = machineById(state, machineId);
+    if (!machine) return { ok: false, reason: 'Unknown machine' };
+    if (!machine.active.awaitingFirstOff) return { ok: false, reason: 'No first article is waiting on this machine' };
+
+    const actor = currentActor(state);
+    machine.active.awaitingFirstOff = false;
+    if (approved) {
+      machine.active.firstOffApprovedAt = Date.now();
+      machine.active.firstOffApprovedBy = actor.name;
+      machine.downtime = null;
+      setState(state, machine, 'PRODUCTION', { actor: actor.name, role: actor.role, detail: 'first article approved' });
+      record(state, {
+        machineId, event: 'FIRST_OFF_APPROVED', wo: machine.active.wo,
+        summary: `First article on ${machine.active.wo} approved by ${actor.name}${note.trim() ? ` — ${note.trim()}` : ''}`,
+      });
+      return { ok: true, message: 'First article approved — running' };
+    }
+    machine.active.done = Math.max(0, machine.active.done - 1);
+    machine.active.scrap = (machine.active.scrap ?? 0) + 1;
+    record(state, {
+      machineId, event: 'FIRST_OFF_REJECTED', wo: machine.active.wo,
+      summary: `First article on ${machine.active.wo} rejected by ${actor.name}${note.trim() ? ` — ${note.trim()}` : ''}. `
+        + 'Piece scrapped; the machine stays held until the setup is corrected.',
+    });
+    return { ok: true, message: 'First article rejected — machine stays held' };
+  }
+
   // -------------------------------------------- direct machinist control ---
 
   /**
@@ -834,6 +1063,8 @@
    * are different things.
    */
   function reorderQueue(state, machineId, wo, direction) {
+    const permitted = may(state, 'reorderQueue');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const from = machine.queue.findIndex((q) => q.wo === wo);
@@ -862,11 +1093,21 @@
    * about, so it is recorded rather than glossed over.
    */
   function switchActiveJob(state, machineId, wo) {
+    const permitted = may(state, 'switchActiveJob');
+    if (!permitted.ok) return permitted;
     const machine = machineById(state, machineId);
     if (!machine) return { ok: false, reason: 'Unknown machine' };
     const index = machine.queue.findIndex((q) => q.wo === wo);
     if (index < 0) return { ok: false, reason: `${wo} is not in this queue` };
     if (machine.active.wo === wo) return { ok: false, reason: `${wo} is already running` };
+    // Swapping the job would end the stoppage as a side effect and the reason
+    // would never be recorded. Make it explicit instead.
+    if (A.BLOCKED_STATES.includes(machine.state) && !machine.downtime) {
+      return {
+        ok: false,
+        reason: 'Classify the current stoppage first — switching jobs would close it with no reason recorded',
+      };
+    }
 
     const actor = currentActor(state);
     const before = queueWos(machine);
@@ -947,7 +1188,15 @@
     const now = Date.now();
 
     state.machines.forEach((machine) => {
-      if (machine.collector.online) machine.collector.lastEventAt = now;
+      /*
+       * No collector, no data. When the link is down the platform receives
+       * nothing, so nothing may advance — the last known values simply go
+       * stale and are labelled as such. Continuing to increment counters
+       * during an outage would be inventing production that may not have
+       * happened, which is the single worst thing a visibility layer can do.
+       */
+      if (!machine.collector.online) return;
+      machine.collector.lastEventAt = now;
 
       if (machine.state === 'SETUP') {
         machine.setupRemainingMin = Math.max(0, machine.setupRemainingMin - elapsedSimMin);
@@ -973,17 +1222,52 @@
           machine.telemetry.tool = progress && progress.current ? progress.current.tool : '—';
         }
 
-        if (machine.cycleElapsedMin >= machine.cycleTargetMin) {
+        /*
+         * A poll can span more than one cycle — a 30-second poll on a 12-second
+         * part, or the demo clock at 15 min/s. Counting a single part per poll
+         * silently loses the rest, so every completed cycle in the interval is
+         * counted. This is the same trap in production: derive part count from
+         * cycle events, not from "did it change since I last looked".
+         */
+        while (machine.cycleElapsedMin >= machine.cycleTargetMin) {
           machine.history.cycles.push({
             wo: machine.active.wo,
             program: machine.active.program,
             min: Number(machine.cycleTargetMin.toFixed(2)),
             at: now,
           });
+          /*
+           * A completed cycle is a cycle, not necessarily a good part. The
+           * count of cycles run and the count of good parts are tracked
+           * separately; scrap moves one from good to scrap. D365 wants good
+           * quantity, and conflating the two overstates every job.
+           */
+          machine.active.cyclesRun = (machine.active.cyclesRun ?? machine.active.done) + 1;
           machine.active.done = Math.min(machine.active.qty, machine.active.done + 1);
-          machine.cycleElapsedMin = 0;
-          machine.cycleTargetMin = null;
+          machine.cycleElapsedMin -= machine.cycleTargetMin;
+          machine.cycleTargetMin = sampleCycleTarget(machine);
           if (machine.telemetry) machine.telemetry.block = 1;
+
+          // First piece off a fresh setup goes to inspection before the rest.
+          if (machine.active.firstOffRequired && !machine.active.firstOffApprovedAt) {
+            machine.active.awaitingFirstOff = true;
+            setState(state, machine, 'STOPPED', { detail: 'first piece awaiting inspection' });
+            machine.downtime = {
+              code: 'INSPECTION',
+              label: 'Waiting for inspection',
+              owner: 'Quality',
+              note: `First piece off ${machine.active.wo} — held for first-article approval`,
+              startedAt: now,
+              classifiedAt: now,
+              classifiedBy: 'System',
+            };
+            record(state, {
+              actor: 'System', role: 'System', machineId: machine.id,
+              event: 'FIRST_OFF_HELD', wo: machine.active.wo,
+              summary: 'First piece complete — production held until the first article is approved',
+            });
+            return;
+          }
 
           if (machine.active.done >= machine.active.qty) {
             record(state, {
@@ -1014,6 +1298,7 @@
             return;
           }
         }
+        if (machine.cycleTargetMin == null) machine.cycleTargetMin = sampleCycleTarget(machine);
 
         // Occasional unplanned fault, so FAULT handling is demonstrable.
         if (Math.random() < 0.0025) {
@@ -1088,7 +1373,7 @@
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      return parsed.version === 2 ? parsed : null;
+      return parsed.version === 3 ? parsed : null;
     } catch (err) {
       return null;
     }
@@ -1124,6 +1409,14 @@
     switchActiveJob,
     setMachinistEstimate,
     finaliseProcess,
+    recordScrap,
+    approveFirstOff,
+    signIn,
+    signOut,
+    acknowledgeExpiry,
+    unacknowledgedExpiries,
+    may,
+    PERMISSIONS,
     UNPLANNED_CATEGORIES,
     REMOVAL_REASONS,
     assignmentIssues,

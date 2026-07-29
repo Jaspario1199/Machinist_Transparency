@@ -83,6 +83,57 @@
     if (target) target.focus({ preventScroll: true });
   }
 
+  const ROLE_OF = { Machinist: 'machinist', 'Engineer / PM': 'engineer', Leadership: 'leadership' };
+
+  /**
+   * Who is at the terminal.
+   *
+   * This is a picker rather than a label because a wall terminal is shared —
+   * several machinists across a shift, plus engineering looking over a
+   * shoulder — and the audit trail is only worth having if it names the person
+   * who actually pressed the button. Signing in and out is itself audited, and
+   * signing out leaves the terminal unable to act: every state function goes
+   * through a permission check that requires somebody to be signed in.
+   *
+   * The role tabs and this picker are two views of the same fact. Choosing a
+   * person switches to their role; choosing a role signs in that role's default
+   * person. They cannot disagree, because a screen that says "Engineer" while
+   * attributing decisions to a machinist is exactly the failure this whole
+   * application exists to prevent.
+   */
+  function renderIdentity() {
+    const select = $('actorSelect');
+    const signedIn = state.signedIn;
+    const options = state.people
+      .map((p) => `<option value="${V.esc(p.name)}"${signedIn && p.name === signedIn.name ? ' selected' : ''}>${V.esc(p.name)} — ${V.esc(p.role)}</option>`)
+      .join('');
+    select.innerHTML = `<option value=""${signedIn ? '' : ' selected'}>Nobody — terminal locked</option>${options}`;
+    $('actorName').textContent = signedIn
+      ? signedIn.title
+      : 'Terminal locked — sign in to record a decision';
+    $('signOutButton').disabled = !signedIn;
+  }
+
+  /**
+   * Switching role tab signs in that role's default person, so the identity and
+   * the view can never disagree. Nothing happens if the person already signed
+   * in holds the role — a second machinist should not be handed the terminal
+   * just because somebody re-pressed the tab they were already on.
+   */
+  function setRole(role) {
+    if (state.signedIn && ROLE_OF[state.signedIn.role] === role) {
+      state.role = role;
+      S.save(state);
+      render();
+      return;
+    }
+    const person = state.people.find((p) => ROLE_OF[p.role] === role);
+    if (!person) return;
+    const result = S.signIn(state, person.name);
+    state.role = role;
+    commit(result, result.ok ? `Signed in as ${person.name} (${person.role})` : undefined);
+  }
+
   function render() {
     const now = Date.now();
     window.MT_STATE_LIBRARY = state.programLibrary;
@@ -95,7 +146,7 @@
     $('help').textContent = copy.help;
     $('chooseTitle').textContent = copy.choose;
     $('chooseHelp').textContent = copy.chooseHelp;
-    $('actorName').textContent = `${S.currentActor(state).name} — ${S.currentActor(state).title}`;
+    renderIdentity();
 
     ROLES.forEach((role) => {
       const tab = document.querySelector(`[data-role="${role}"]`);
@@ -492,13 +543,29 @@
     const reason = S.reasonByCode(code);
     let note = '';
     if (reason.noteRequired) {
+      /*
+       * The note prompt is a continuation of the stoppage prompt, not a second
+       * decision on top of it. Stacking two modals gave a doubled backdrop and
+       * an ambiguous Escape — one press dismissed the note and left the
+       * stoppage dialog behind it. So the stoppage prompt steps aside, and if
+       * the note is abandoned it comes straight back with the reason grid
+       * intact. No deferral is recorded: the machinist never left the task.
+       */
+      const wasOpen = $('downtimeDialog').open;
+      if (wasOpen) $('downtimeDialog').close();
       const answer = await ask({
         title: reason.label,
         description: `${reason.definition}. This reason routes to ${reason.owner} and needs a short note.`,
         fields: [{ type: 'textarea', name: 'note', label: 'What is holding it up?', placeholder: 'One line is enough' }],
         confirmLabel: 'Save reason',
       });
-      if (!answer) return;
+      if (!answer) {
+        if (wasOpen) {
+          renderDowntimeDialog(S.selectedMachine(state));
+          $('downtimeDialog').showModal();
+        }
+        return;
+      }
       note = answer.note ?? '';
     }
     const result = S.classifyDowntime(state, state.selected, code, note);
@@ -508,6 +575,46 @@
     }
     if ($('downtimeDialog').open) $('downtimeDialog').close();
     commit(result, `Recorded as ${reason.label} — ${reason.owner} notified`);
+  }
+
+  async function handleRecordScrap() {
+    const machine = S.selectedMachine(state);
+    if (!machine.active.done) { toast('No good pieces recorded yet on this job', 'bad'); return; }
+    const answer = await ask({
+      title: `Record scrap on ${machine.active.wo}`,
+      description: `${machine.active.done} good of ${machine.active.qty}. Scrapping moves pieces out of the good `
+        + 'count; the machine time stays in the cycle history, so the estimate does not pretend the work never happened.',
+      fields: [
+        {
+          type: 'select',
+          name: 'count',
+          label: 'How many pieces?',
+          options: Array.from({ length: Math.min(10, machine.active.done) }, (_, i) => ({
+            value: String(i + 1), label: `${i + 1} piece${i === 0 ? '' : 's'}`,
+          })),
+        },
+        { type: 'textarea', name: 'note', label: 'What went wrong? (optional)', placeholder: 'One line is enough' },
+      ],
+      confirmLabel: 'Record scrap',
+      danger: true,
+    });
+    if (!answer) return;
+    commit(S.recordScrap(state, machine.id, Number(answer.count), answer.note ?? ''));
+  }
+
+  async function handleFirstOff(approved) {
+    const machine = S.selectedMachine(state);
+    const answer = await ask({
+      title: approved ? 'Approve the first article?' : 'Reject the first article?',
+      description: approved
+        ? `The first piece off ${machine.active.wo} is good and the rest of the job may run.`
+        : `The first piece off ${machine.active.wo} is scrapped and the machine stays held until the setup is corrected.`,
+      fields: [{ type: 'textarea', name: 'note', label: 'Note (optional)', placeholder: 'Measurements, what was adjusted' }],
+      confirmLabel: approved ? 'Approve and run' : 'Reject and hold',
+      danger: !approved,
+    });
+    if (!answer) return;
+    commit(S.approveFirstOff(state, machine.id, approved, answer.note ?? ''));
   }
 
   async function handleReset() {
@@ -590,15 +697,25 @@
     if (event.key === 'End') next = ROLES[ROLES.length - 1];
     if (!next) return;
     event.preventDefault();
-    state.role = next;
-    render();
+    setRole(next);
     document.querySelector(`[data-role="${next}"]`).focus();
   }
 
   function bind() {
     document.querySelectorAll('[data-role]').forEach((tab) => {
-      tab.addEventListener('click', () => { state.role = tab.dataset.role; S.save(state); render(); });
+      tab.addEventListener('click', () => setRole(tab.dataset.role));
       tab.addEventListener('keydown', onTabKeydown);
+    });
+
+    $('actorSelect').addEventListener('change', (event) => {
+      const name = event.target.value;
+      if (!name) { commit(S.signOut(state)); return; }
+      const result = S.signIn(state, name);
+      if (result.ok) state.role = ROLE_OF[state.people.find((p) => p.name === name).role] ?? state.role;
+      commit(result);
+    });
+    $('signOutButton').addEventListener('click', () => {
+      commit(S.signOut(state), 'Signed out — the terminal cannot record a decision until somebody signs in');
     });
 
     $('machines').addEventListener('click', (event) => {
@@ -630,6 +747,9 @@
       const runNow = event.target.closest('[data-queue-run]');
       if (runNow) { handleRunNow(runNow.dataset.queueRun); return; }
 
+      const ack = event.target.closest('[data-ack-expiry]');
+      if (ack) { commit(S.acknowledgeExpiry(state, Number(ack.dataset.ackExpiry))); return; }
+
       const jump = event.target.closest('[data-select-machine]');
       if (jump) { state.selected = jump.dataset.selectMachine; S.save(state); render(); maybeRaiseDowntimeDialog(); return; }
 
@@ -644,6 +764,9 @@
         case 'request': openRequestDialog(id); break;
         case 'add-job': openAddJobDialog(); break;
         case 'set-estimate': handleSetEstimate(); break;
+        case 'record-scrap': handleRecordScrap(); break;
+        case 'first-off-approve': handleFirstOff(true); break;
+        case 'first-off-reject': handleFirstOff(false); break;
         case 'finalise-process': commit(S.finaliseProcess(state, id)); break;
         case 'open-downtime': {
           const machine = S.selectedMachine(state);
@@ -688,6 +811,23 @@
     $('downtimeSnooze').addEventListener('click', () => {
       $('downtimeDialog').close();
       commit(S.snoozeDowntimePrompt(state, state.selected, 60));
+    });
+    /*
+     * Escape is a deferral, not a silent escape hatch.
+     *
+     * A native dialog fires `cancel` only on Escape — every button in the
+     * dialog calls close() directly — so this handler is precisely the
+     * "dismissed without answering" path. It used to close the prompt with no
+     * record and no snooze, which meant the prompt reopened on the next tick
+     * (unusable) and the dismissal never reached the audit trail. It now takes
+     * the same route as the explicit defer button: audited, still flagged
+     * unclassified, back in 60 seconds.
+     */
+    $('downtimeDialog').addEventListener('cancel', (event) => {
+      event.preventDefault();
+      $('downtimeDialog').close();
+      commit(S.snoozeDowntimePrompt(state, state.selected, 60),
+        'Deferred — the stoppage stays unclassified and the prompt returns in 60s');
     });
 
     $('simToggle').addEventListener('click', () => {

@@ -70,6 +70,13 @@ otherwise take a shift to observe:
 
 - Select a CNC; everything below applies to that machine only.
 - Confirm setup complete, stop, resume, or load the next job.
+- Reorder the approved queue directly — up, down, straight to the top, run one
+  now, or take one off. No request, no approval; still audited.
+- Release or reject the first article when a job holds for one. Rejecting
+  scraps the piece and keeps the machine held.
+- Record scrap. Good quantity and cycles run are separate numbers and the gap
+  between them is visible, because counting a finished cycle as a good part is
+  how a job reports 100% and then ships short.
 - Decide a queue request four ways: **approve now**, **approve after the current
   job**, **propose another position**, or **reject** with a reason from the
   agreed list.
@@ -103,8 +110,13 @@ otherwise take a shift to observe:
   until that job completes — it is not styled as an applied change, and
   leadership counts it separately.
 - An approval that cannot be carried out — because the work order already left
-  the queue — fails loudly and stays pending. It never reports a success it did
-  not achieve.
+  the queue — fails loudly. It never reports a success it did not achieve: the
+  request itself says the approval never took effect, and it counts on the
+  leadership board until somebody acknowledges it. The person who asked was
+  told "approved"; they have to be told it did not happen.
+- Unplanned work carries no due date, so it is never reported at due-date risk.
+  There is no committed date to miss, and inventing one from the estimate would
+  make every overrun on a piece of rework read as a broken commitment.
 - Every decision writes an audit row with timestamp, named actor, role, the
   queue before and after, and the ETA impact.
 
@@ -120,8 +132,13 @@ is read as a commitment, and committed dates belong to Dynamics 365
 
 - Simulated machine data only; nothing is connected to anything.
 - State survives a refresh via `sessionStorage`, and is gone when the tab closes.
-- No authentication. Role switching is a demo control; the real system uses
-  company sign-in.
+- No authentication. The identity picker in the header stands in for company
+  sign-in; the real system takes the identity from Entra ID. What is *not* a
+  stand-in is the permission layer behind it — every state change goes through
+  a role check, and a terminal with nobody signed in cannot record anything.
+  Sign-in, sign-out and handover are audit events in their own right.
+- No idle timeout. A shared terminal left signed in will attribute the next
+  person's decisions to whoever walked away (D-28).
 - The full normalised state model has nine states (`docs/02`); the demo exercises
   `PRODUCTION`, `SETUP`, `STOPPED`, `FAULT` and `READY`.
 - The page follows the viewer's light/dark preference, and a host page can pin
