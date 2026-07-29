@@ -1628,3 +1628,69 @@ test('the shop-wide board never appears outside leadership', async () => {
   await page.click('[data-role="leadership"]');
   assert.ok(await page.evaluate(() => document.getElementById('metrics').getBoundingClientRect().height > 0));
 });
+
+/*
+ * The interface reads as an instrument, not a game.
+ *
+ * These pin the specific decisions that made it read as a toy: fully-round
+ * status pills inside square containers, thick filled progress troughs, and a
+ * saturated confirmation box for routine actions. Each is cheap to reintroduce
+ * by habit, so each gets a test.
+ */
+test('status tags are square tags, not achievement pills', async () => {
+  const page = await open();
+  const containerRadius = await page.evaluate(() =>
+    parseFloat(getComputedStyle(document.querySelector('.panel')).borderTopLeftRadius));
+
+  for (const selector of ['.badge', '.flag']) {
+    const radius = await page.$$eval(selector, (els) =>
+      els.map((e) => parseFloat(getComputedStyle(e).borderTopLeftRadius)));
+    assert.ok(radius.length > 0, `no ${selector} on the page`);
+    for (const r of radius) {
+      assert.ok(r <= containerRadius + 1,
+        `${selector} radius ${r}px exceeds its container's ${containerRadius}px — a small element rounder than the box it sits in reads as a game chip`);
+    }
+  }
+});
+
+test('progress is a thin rule beside a number, not a loading bar', async () => {
+  const page = await open();
+  const heights = await page.$$eval('.track', (els) =>
+    els.map((e) => parseFloat(getComputedStyle(e).height)));
+  assert.ok(heights.length > 0);
+  for (const h of heights) {
+    assert.ok(h <= 6, `a ${h}px filled trough is an XP bar; the quantity is already stated in words beside it`);
+  }
+  // The words have to actually be there for the thin rule to be enough.
+  assert.match(await page.textContent('#panel'), /34 of 50 complete/);
+});
+
+test('a routine confirmation is not styled as a celebration', async () => {
+  const page = await open();
+  const [neutral, ok, bad] = await page.evaluate(() => {
+    const el = document.getElementById('toast');
+    const read = (cls) => {
+      el.className = cls;
+      return getComputedStyle(el).backgroundColor;
+    };
+    return [read('toast'), read('toast ok'), read('toast bad')];
+  });
+  assert.equal(ok, neutral,
+    'success should use the neutral surface — a saturated green box in the corner reads as achievement unlocked');
+  assert.notEqual(bad, neutral,
+    'a rejected action is the one thing that genuinely has to interrupt, so it keeps the red');
+});
+
+test('the simulation controls sit below the work, not above it', async () => {
+  const page = await open();
+  const belowPanel = await page.evaluate(() => {
+    const panel = document.getElementById('panel');
+    const simbar = document.querySelector('.simbar');
+    return (panel.compareDocumentPosition(simbar) & 4) !== 0;
+  });
+  assert.ok(belowPanel,
+    'a clock multiplier and a fault injector above the shop teach the eye "simulator" before the work loads');
+  // Still reachable — a reviewer cannot otherwise force a fault or compress a shift.
+  assert.ok(await page.$('#faultButton'));
+  assert.ok(await page.$('#simSpeed'));
+});

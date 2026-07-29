@@ -140,18 +140,18 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
 
 /* --------------------------------------------------------- simulation bar */
 
-.simbar { background: var(--simbar-bg); border-bottom: 1px solid var(--border); }
+/* Now sits under the work, so the rule that separates it moved to the top. */
+.simbar { background: var(--simbar-bg); border-top: 1px solid var(--border); margin-top: 26px; }
 
 .simbar-inner {
   max-width: var(--container);
   margin: auto;
-  padding: 7px 24px;
+  padding: 10px 0;
   display: flex;
   justify-content: flex-start;
   align-items: center;
   gap: 14px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
 }
 .simbar-inner::-webkit-scrollbar { height: 6px; }
 .sim-heading { display: grid; flex: none; }
@@ -164,7 +164,9 @@ header { background: var(--brand); color: var(--on-brand); padding: 16px 24px; }
   text-transform: uppercase;
   color: var(--muted);
 }
-.sim-actions { display: flex; gap: 8px; flex-wrap: nowrap; align-items: center; margin-left: auto; }
+/* Free to wrap now that it sits at the foot; the tablet rule below still
+ * collapses it to one scrolling row where vertical space is the constraint. */
+.sim-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-left: auto; }
 .inline {
   display: inline-flex;
   align-items: center;
@@ -251,15 +253,16 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 .flags { display: flex; gap: 6px; flex-wrap: wrap; }
 .flag {
   font-size: .74rem;
-  font-weight: 800;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  background: transparent;
   color: var(--accent);
 }
-.flag.urgent { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
-.flag.deferred { background: color-mix(in srgb, var(--amber) 16%, transparent); color: var(--amber); }
-.flag.quiet { background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
+.flag.urgent { color: var(--red); }
+.flag.deferred { color: var(--amber); border-style: dashed; }
+.flag.quiet { color: var(--muted); }
 
 /* ------------------------------------------------------------------ panels */
 
@@ -331,14 +334,23 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 .wo { font-weight: 800; }
 .wo.big { font-size: 1.15rem; }
 
+/*
+ * A rule, not a loading bar.
+ *
+ * These were 10px and 14px rounded troughs filled with saturated brand blue —
+ * the shape of an XP bar or a download. The quantity is already stated in words
+ * beside every one of them ("34 of 50 complete · 68%"), so the graphic only has
+ * to give the eye a proportion at a glance. Four square pixels does that
+ * without pretending to be the primary read.
+ */
 .track {
-  height: 10px;
-  background: color-mix(in srgb, var(--text) 12%, transparent);
-  border-radius: 99px;
+  height: 4px;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  border-radius: 0;
   overflow: hidden;
   display: block;
 }
-.track.big-track { height: 14px; }
+.track.big-track { height: 5px; }
 .bar { height: 100%; background: var(--accent-solid); display: block; }
 
 /* -------------------------------------------------------------- ETA block */
@@ -459,22 +471,35 @@ main { max-width: var(--container); margin: auto; padding: 22px 24px 40px; }
 
 /* ---------------------------------------------------------------- badges */
 
+/*
+ * Square tags, not pills.
+ *
+ * These were fully round (999px) sitting inside 4px containers — small
+ * elements rounder than the boxes they live in, in heavy bold micro-type on a
+ * pastel fill. That is achievement-chip vocabulary, and it was the single
+ * strongest reason the interface read as a game rather than an instrument.
+ *
+ * The colour now sits on the border and the text, not in a filled body: the
+ * same signal, carried the way an instrument carries it. Radius matches the
+ * containers, and the weight comes down from 800 to 700 so a status tag stops
+ * shouting louder than the work order beside it.
+ */
 .badge {
-  border-radius: 999px;
-  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
   font-size: .74rem;
-  font-weight: 800;
+  font-weight: 700;
+  letter-spacing: .02em;
   white-space: nowrap;
   display: inline-block;
+  border: 1px solid currentColor;
+  background: transparent;
 }
-.production { color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); }
-.setup { color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
-.stopped, .fault { color: var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); }
-.deferred { color: var(--amber); background: color-mix(in srgb, var(--amber) 20%, transparent); border: 1px dashed var(--amber); }
-.ready, .unavailable, .off, .unknown, .planned_downtime {
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 14%, transparent);
-}
+.production { color: var(--green); }
+.setup { color: var(--amber); }
+.stopped, .fault { color: var(--red); }
+.deferred { color: var(--amber); border-style: dashed; }
+.ready, .unavailable, .off, .unknown, .planned_downtime { color: var(--muted); }
 
 /* ---------------------------------------------------------------- notices */
 
@@ -649,7 +674,7 @@ textarea { min-height: 80px; resize: vertical; }
 .op.done .op-seq { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
 .op-main { flex: 1; display: grid; gap: 3px; min-width: 0; }
 .op-title { font-weight: 700; }
-.op-track { height: 6px; }
+.op-track { height: 4px; }
 .op-est { flex: none; font-size: .82rem; font-variant-numeric: tabular-nums; }
 
 .stats.five { grid-template-columns: repeat(5, 1fr); }
@@ -684,12 +709,12 @@ textarea { min-height: 80px; resize: vertical; }
 
 .unplanned-badge {
   font-size: .72rem;
-  font-weight: 800;
+  font-weight: 700;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   border: 1px dashed var(--amber);
   color: var(--amber);
-  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  background: transparent;
 }
 
 /* ------------------------------------------------- machinist queue controls */
@@ -744,8 +769,18 @@ textarea { min-height: 80px; resize: vertical; }
   box-shadow: var(--shadow);
   font-weight: 600;
 }
-.toast.ok { background: var(--green-solid); }
-.toast.bad { background: var(--red-solid); }
+/*
+ * A confirmation is not a celebration.
+ *
+ * Routine success used to arrive as a saturated green box in the corner —
+ * "Signed in as R. Delgado" styled like an achievement unlocked. Congratulating
+ * someone for signing in is the clearest tell that an interface thinks it is a
+ * game. Success now uses the neutral surface and says what happened; failure
+ * keeps the red, because a rejected action is the one thing that genuinely
+ * has to interrupt.
+ */
+.toast.ok { background: var(--toast-bg); }
+.toast.bad { background: var(--red-solid); font-weight: 700; }
 
 .footer { margin-top: 24px; color: var(--muted); font-size: .86rem; }
 .footer p { margin: 4px 0; }

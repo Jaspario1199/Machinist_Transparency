@@ -46,38 +46,6 @@
   <p class="banner urgent nojs">This demo needs JavaScript. It runs entirely in your browser — nothing is sent anywhere.</p>
 </noscript>
 
-<div class="simbar">
-  <div class="simbar-inner">
-    <div class="sim-heading">
-      <span class="sim-tag">Simulation controls</span>
-      <span class="muted small">Stand-in for the edge collector. None of these are product features.</span>
-    </div>
-    <div class="sim-actions">
-      <button class="btn small" id="simToggle" aria-pressed="false">Pause telemetry</button>
-      <label class="inline">Clock
-        <select id="simSpeed">
-          <option value="0.25">0.25 min/s</option>
-          <option value="1" selected>1 min/s</option>
-          <option value="4">4 min/s</option>
-          <option value="15">15 min/s</option>
-        </select>
-      </label>
-      <label class="inline">Downtime prompt after
-        <select id="promptThreshold">
-          <option value="20">20 s</option>
-          <option value="60">60 s</option>
-          <option value="180" selected>180 s</option>
-          <option value="600">600 s</option>
-        </select>
-      </label>
-      <button class="btn small" id="faultButton">Inject fault</button>
-      <button class="btn small" id="collectorToggle">Simulate collector dropout</button>
-      <button class="btn small" id="exportButton">Export audit CSV</button>
-      <button class="btn small" id="resetButton">Reset demo</button>
-    </div>
-  </div>
-</div>
-
 <main>
   <section class="top">
     <div>
@@ -116,6 +84,48 @@
     </div>
     <div class="content" id="shopAuditBody"></div>
   </section>
+
+  <!--
+    Simulation controls live at the foot of the page, below the work.
+
+    A clock-speed multiplier and an "inject fault" button are the interface of a
+    management simulator, and sitting them second on the page taught the eye
+    "this is a toy" before the shop had loaded. They are still needed — a
+    reviewer cannot otherwise force a fault or compress a shift — so they stay,
+    labelled and reachable, in the place a real application keeps its
+    diagnostics: at the bottom, next to the disclaimer that explains them.
+  -->
+  <div class="simbar">
+    <div class="simbar-inner">
+      <div class="sim-heading">
+        <span class="sim-tag">Simulation controls</span>
+        <span class="muted small">Stand-in for the edge collector. None of these are product features.</span>
+      </div>
+      <div class="sim-actions">
+        <button class="btn small" id="simToggle" aria-pressed="false">Pause telemetry</button>
+        <label class="inline">Clock
+          <select id="simSpeed">
+            <option value="0.25">0.25 min/s</option>
+            <option value="1" selected>1 min/s</option>
+            <option value="4">4 min/s</option>
+            <option value="15">15 min/s</option>
+          </select>
+        </label>
+        <label class="inline">Downtime prompt after
+          <select id="promptThreshold">
+            <option value="20">20 s</option>
+            <option value="60">60 s</option>
+            <option value="180" selected>180 s</option>
+            <option value="600">600 s</option>
+          </select>
+        </label>
+        <button class="btn small" id="faultButton">Inject fault</button>
+        <button class="btn small" id="collectorToggle">Simulate collector dropout</button>
+        <button class="btn small" id="exportButton">Export audit CSV</button>
+        <button class="btn small" id="resetButton">Reset demo</button>
+      </div>
+    </div>
+  </div>
 
   <footer class="footer">
     <p><strong>Simulated beta.</strong> No CNC, Dynamics 365, Bluestar, FS1, database or network connection. All data on
